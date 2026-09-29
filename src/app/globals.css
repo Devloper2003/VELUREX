@@ -1,0 +1,374 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ─── Velurex HMS Design Tokens ──────────────────────────────────────────── */
+@theme {
+  --color-plaster: #efe6d8;      /* page background */
+  --color-plaster-deep: #e6d9c3; /* deeper plaster for wells/hovers */
+  --color-panel: #fbf8f2;        /* card/panel background */
+  --color-pine: #0f2622;         /* sidebar dark pine */
+  --color-pine-800: #16332e;
+  --color-pine-700: #1f4b43;     /* primary accent */
+  --color-pine-600: #2a5d54;
+  --color-pine-100: #dce8e2;
+  --color-brass: #b9873e;        /* secondary accent */
+  --color-brass-light: #d9b779;
+  --color-brass-50: #f5ecdd;
+  --color-ok: #4c7a5a;           /* vacant / ok */
+  --color-warn: #c08a2e;         /* dirty / warn */
+  --color-danger: #a44534;       /* out-of-order / danger */
+  --color-ink: #26302c;          /* body text */
+  --color-muted-ink: #7a6f5d;    /* secondary text */
+  --color-line: #e3d7c1;         /* panel borders */
+  --color-line-strong: #d3c3a4;
+
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-script: "Great Vibes", "Fraunces", cursive;
+}
+
+/* Keep shadcn primitives aligned with the brand palette */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.5rem;
+  --background: #efe6d8;
+  --foreground: #26302c;
+  --card: #fbf8f2;
+  --card-foreground: #26302c;
+  --popover: #fbf8f2;
+  --popover-foreground: #26302c;
+  --primary: #1f4b43;
+  --primary-foreground: #fbf8f2;
+  --secondary: #f5ecdd;
+  --secondary-foreground: #1f4b43;
+  --muted: #f0e9db;
+  --muted-foreground: #7a6f5d;
+  --accent: #f5ecdd;
+  --accent-foreground: #1f4b43;
+  --destructive: #a44534;
+  --border: #e3d7c1;
+  --input: #d9cbae;
+  --ring: #b9873e;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply bg-plaster;
+  }
+  body {
+    @apply bg-plaster text-ink font-sans;
+    font-feature-settings: "ss01";
+  }
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+  }
+  /* Brand text selection */
+  ::selection {
+    background: #1f4b43;
+    color: #fbf8f2;
+  }
+  /* Keyboard focus — visible brass ring, never shown for mouse users */
+  :focus-visible {
+    outline: 2px solid rgba(185, 135, 62, 0.65);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  .tile-btn:focus-visible {
+    outline-color: rgba(251, 248, 242, 0.9);
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #d3c3a4;
+    border-radius: 8px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #b9873e;
+  }
+  /* Respect users who prefer reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Bordered panel — the core surface of the design system (no floating shadows) */
+  .panel {
+    @apply bg-panel border border-line rounded-lg;
+  }
+  .panel-header {
+    @apply px-4 py-3 border-b border-line flex items-center justify-between gap-3;
+  }
+  .panel-title {
+    @apply font-display font-semibold text-pine text-[15px] tracking-tight;
+  }
+  .field-label {
+    @apply text-[11px] font-medium uppercase tracking-wider text-muted-ink mb-1 block;
+  }
+  .field {
+    @apply w-full h-9 rounded-md border border-input bg-panel px-3 text-sm text-ink placeholder:text-muted-ink/60 focus:outline-none focus:ring-2 focus:ring-brass/40 focus:border-brass transition;
+  }
+  .btn-pine {
+    @apply inline-flex items-center justify-center gap-2 h-9 px-4 rounded-md bg-pine-700 text-panel text-sm font-medium hover:bg-pine-600 active:scale-[.98] transition disabled:opacity-50 disabled:pointer-events-none whitespace-nowrap;
+  }
+  .btn-brass {
+    @apply inline-flex items-center justify-center gap-2 h-9 px-4 rounded-md bg-brass text-white text-sm font-medium hover:bg-brass/90 active:scale-[.98] transition disabled:opacity-50 disabled:pointer-events-none whitespace-nowrap;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 h-9 px-3 rounded-md text-sm font-medium text-pine-700 hover:bg-plaster-deep/60 transition disabled:opacity-50 whitespace-nowrap;
+  }
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-2 h-9 px-3 rounded-md border border-line-strong text-sm font-medium text-pine-700 bg-panel hover:bg-plaster-deep/50 transition whitespace-nowrap;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 h-9 px-4 rounded-md bg-danger text-white text-sm font-medium hover:bg-danger/90 transition disabled:opacity-50 whitespace-nowrap;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border;
+  }
+  .kpi-value {
+    @apply font-display font-semibold text-pine text-2xl tracking-tight;
+  }
+  .th {
+    @apply text-left text-[11px] font-semibold uppercase tracking-wider text-muted-ink px-3 py-2 border-b border-line bg-plaster/50;
+  }
+  .td {
+    @apply px-3 py-2.5 text-sm border-b border-line/70 text-ink;
+  }
+  .section-title {
+    @apply font-display text-lg font-semibold text-pine tracking-tight;
+  }
+  /* Script accent — Great Vibes flourishes for greetings/eyebrows */
+  .font-script {
+    font-family: var(--font-script);
+    font-weight: 400;
+  }
+  /* KPI card with brass top hairline that warms on hover */
+  .stat-card {
+    @apply bg-panel border border-line rounded-lg p-4 relative overflow-hidden transition-colors duration-200;
+  }
+  .stat-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--color-brass), var(--color-brass-light));
+    opacity: 0;
+    transition: opacity 0.25s ease;
+  }
+  .stat-card:hover::before { opacity: 1; }
+  /* Icon chip used across KPI cards and toolbars */
+  .icon-chip {
+    @apply h-9 w-9 rounded-md flex items-center justify-center shrink-0;
+    background: color-mix(in srgb, var(--color-brass) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-brass) 28%, transparent);
+    color: var(--color-brass);
+  }
+  .icon-chip-pine {
+    @apply h-9 w-9 rounded-md flex items-center justify-center shrink-0;
+    background: color-mix(in srgb, var(--color-pine-700) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-pine-700) 24%, transparent);
+    color: var(--color-pine-700);
+  }
+}
+
+/* Room status tile colors */
+.tile-vacant { background: #4c7a5a; color: #f2f7f0; }
+.tile-occupied { background: #1f4b43; color: #eaf2ee; }
+.tile-dirty { background: #c08a2e; color: #fdf8ec; }
+.tile-clean { background: #7ea08c; color: #f2f7f0; }
+.tile-out_of_order { background: #a44534; color: #f9ede9; }
+
+/* Custom thin scrollbars inside panels */
+.scroll-slim::-webkit-scrollbar { width: 6px; height: 6px; }
+.scroll-slim::-webkit-scrollbar-thumb { background: #d3c3a4; }
+/* Slim scrollbar on dark pine surfaces (owner sidebar) */
+.scroll-slim-pine::-webkit-scrollbar { width: 5px; }
+.scroll-slim-pine::-webkit-scrollbar-thumb { background: rgba(217, 183, 121, 0.25); border-radius: 6px; }
+.scroll-slim-pine::-webkit-scrollbar-thumb:hover { background: rgba(217, 183, 121, 0.45); }
+
+/* Textured pine surface — radial brass glows (login brand panel / owner sidebar) */
+.pine-texture {
+  position: relative;
+  isolation: isolate;
+}
+.pine-texture::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(185, 135, 62, 0.16) 0, transparent 42%),
+    radial-gradient(circle at 85% 78%, rgba(185, 135, 62, 0.10) 0, transparent 38%),
+    linear-gradient(180deg, #123029 0%, var(--color-pine) 55%);
+}
+/* Hairline separators on pine surfaces */
+.pine-hairline { border-color: rgba(217, 183, 121, 0.22); }
+
+/* Calendar drag ghost */
+.cal-bar { transition: box-shadow .15s ease, transform .15s ease; }
+.cal-bar:hover { box-shadow: 0 2px 8px rgba(15,38,34,.25); z-index: 5; }
+
+/* Live-update flash — brass wash that fades out on realtime-touched rows */
+@keyframes flashRow {
+  0%   { background-color: rgba(185, 135, 62, 0.32); }
+  60%  { background-color: rgba(185, 135, 62, 0.14); }
+  100% { background-color: rgba(185, 135, 62, 0); }
+}
+.flash-row { animation: flashRow 2.6s ease-out both; }
+
+/* Live nudge on stat cards when data arrives via realtime */
+@keyframes livePing {
+  0% { box-shadow: 0 0 0 0 rgba(76, 122, 90, 0.45); }
+  100% { box-shadow: 0 0 0 10px rgba(76, 122, 90, 0); }
+}
+.live-ping { animation: livePing 1.2s ease-out 1; }
+
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #f0e9db 25%, #e6d9c3 50%, #f0e9db 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+
+/* Expand-in for inline panels (group charge routing picker, previews) */
+@keyframes expandIn {
+  0%   { opacity: 0; transform: translateY(-4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.expand-in { animation: expandIn 0.22s ease-out both; }
+
+/* Progress fill sweep when settlement bars first render / update */
+@keyframes barGrow {
+  0% { transform: scaleX(0); }
+  100% { transform: scaleX(1); }
+}
+.bar-grow { transform-origin: left center; animation: barGrow 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* Print: only the active view content should print (day sheet, invoices, KOT) */
+@media print {
+  html, body { background: #fff !important; }
+  aside, header, footer, nav { display: none !important; }
+  main { padding: 0 !important; }
+  .panel { border-color: #d3c3a4 !important; break-inside: avoid; }
+  .btn-pine, .btn-brass, .btn-outline, .btn-ghost, .btn-danger { display: none !important; }
+}
+
+/* Toast surface — align shadcn toasts with the panel look */
+[data-radix-toast-viewport] {
+  z-index: 100;
+}
+[data-radix-toast-viewport] > li {
+  border: 1px solid var(--color-line-strong);
+  border-radius: 10px;
+  background: var(--color-panel);
+  color: var(--color-ink);
+  box-shadow: 0 6px 24px rgba(15, 38, 34, 0.14);
+  font-family: var(--font-sans);
+  letter-spacing: 0.01em;
+}
+[data-radix-toast-viewport] > li[data-state="open"] [data-title] {
+  font-family: var(--font-display);
+}
+
+/* ─── Command palette & kbd chips ────────────────────────────────────────── */
+.cmd-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.15rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--color-line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--color-panel);
+  color: var(--color-pine);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+
+/* Brand the shadcn command palette (mounted as .command-palette DialogContent) */
+.command-palette [data-slot="command"] {
+  background: var(--color-panel);
+  border: 1px solid var(--color-line-strong);
+}
+.command-palette [cmdk-input] {
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+}
+.command-palette [cmdk-input]::placeholder {
+  color: var(--color-muted-ink);
+}
+.command-palette [cmdk-input-wrapper] {
+  border-bottom: 1px solid var(--color-line);
+}
+.command-palette [cmdk-group-heading] {
+  color: var(--color-muted-ink);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.command-palette [cmdk-item] {
+  border-radius: 7px;
+  color: var(--color-ink);
+  transition: background-color 0.12s ease;
+}
+.command-palette [cmdk-item][data-selected="true"] {
+  background: var(--color-brass-50, #f5ecdd);
+  color: var(--color-pine);
+}
+.command-palette [cmdk-item][data-selected="true"] svg {
+  color: var(--color-brass);
+}
+.command-palette [cmdk-item][data-active-view] {
+  background: var(--color-pine-100);
+}

@@ -1,0 +1,24 @@
+{
+  "name": "Velurex HMS",
+  "short_name": "Velurex",
+  "description": "Hotel Management System — PMS, POS, Housekeeping, Night Audit",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#EFE6D8",
+  "theme_color": "#0F2622",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

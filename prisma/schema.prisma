@@ -1,0 +1,883 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Core ────────────────────────────────────────────────────────────────────
+
+model Property {
+  id                  String   @id @default(cuid())
+  name                String
+  address             String   @default("")
+  city                String   @default("")
+  gstin               String   @default("")
+  phone               String   @default("")
+  email               String   @default("")
+  propertyType        String   @default("Hotel")          // Hotel / Resort / Serviced Apartments…
+  businessCategory    String   @default("Luxury Hotel")   // positioning / star category
+  photoUrl            String   @default("")               // property hero photo (/uploads/…)
+  googleProfile       String   @default("")               // JSON {connected,accountEmail,profileName,lastSyncedAt}
+  currency            String   @default("INR")
+  timezone            String   @default("Asia/Kolkata")
+  businessDate        DateTime @default(now()) // current open business date (rolled by night audit)
+  noShowPercent       Float    @default(100)   // % of first night charged on no-show
+  auditCutoffHour     Int      @default(14)    // no-show detection cutoff hour
+  pricingEnabled      Boolean  @default(true)
+  occupancyThreshold  Float    @default(80)    // % occupancy that triggers dynamic pricing
+  rateIncreasePercent Float    @default(10)    // suggested increase when threshold crossed
+  createdAt           DateTime @default(now())
+  // ── SaaS platform layer (additive, nullable — set by the software-owner dashboard)
+  state              String    @default("")
+  currentPlanId      String? // denormalised mirror of subscription.planId for fast lists
+  subscriptionStatus String    @default("trial") // trial | active | overdue | suspended | cancelled
+  trialEndsAt        DateTime?
+  healthScore        Int       @default(80) // 0-100, recomputed by daily jobs
+  notes              String    @default("") // owner-facing private notes
+  deletedAt          DateTime? // soft delete — data retained ≥60 days
+  isDemo             Boolean   @default(false) // flagged seed/demo tenant — hidden from the real owner's console
+
+  staff         Staff[]
+  roomTypes     RoomType[]
+  rooms         Room[]
+  guests        Guest[]
+  ratePlans     RatePlan[]
+  reservations  Reservation[]
+  folioItems    FolioItem[]
+  payments      Payment[]
+  tasks         HousekeepingTask[]
+  tickets       MaintenanceTicket[]
+  menuItems     MenuItem[]
+  posOrders     PosOrder[]
+  nightAudits   NightAuditLog[]
+  activityLogs  ActivityLog[]
+  promoCodes    PromoCode[]
+  whatsappMsgs  WhatsAppMessage[]
+  channels      ChannelConnection[]
+  inventory     RoomInventory[]
+  channelJobs   ChannelSyncJob[]
+  channelLogs   ChannelSyncLog[]
+  holds         BookingHold[]
+
+  // ── SaaS platform relations (new, additive)
+  subscription       Subscription?
+  addons             SubscriptionAddon[]
+  overrides          FeatureOverride[]
+  invoices           Invoice[]
+  platformPayments   PlatformPayment[]
+  couponRedemptions  CouponRedemption[]
+  supportTickets     SupportTicket[]
+  announcementReads  AnnouncementRead[]
+  checklist          OnboardingChecklist?
+  usageMetrics       UsageMetric[]
+  whatsappConfig     WhatsAppConfig?
+}
+
+model Staff {
+  id           String   @id @default(cuid())
+  propertyId   String
+  name         String
+  email        String   @unique
+  phone        String   @default("")
+  passwordHash String
+  role         String // hotel_admin | front_desk | housekeeping | restaurant_staff
+  active       Boolean  @default(true)
+  googleEmail  String? // linked Google Workspace account (Google sign-in / SSO)
+  lastLoginAt  DateTime? // platform-wide "last login" for the owner Users tab
+  mustChangePassword Boolean @default(false) // true = temp password issued; force reset on next login
+  // ── Two-factor authentication (TOTP) ──
+  totpSecret        String? // AES-256-GCM encrypted seed (v1:iv:tag:cipher) — never stored plaintext
+  totpEnabled       Boolean @default(false)
+  totpRecoveryCodes String? // JSON array of scrypt-hashed single-use recovery codes
+  createdAt    DateTime @default(now())
+
+  property Property            @relation(fields: [propertyId], references: [id])
+  tasks    HousekeepingTask[]  @relation("AssignedTasks")
+}
+
+// ─── PMS ─────────────────────────────────────────────────────────────────────
+
+model RoomType {
+  id           String  @id @default(cuid())
+  propertyId   String
+  name         String
+  code         String
+  description  String  @default("")
+  baseRate     Float
+  maxOccupancy Int     @default(2)
+  sizeSqft     Int     @default(250)
+  bedType      String  @default("King")
+  amenities    String  @default("[]") // JSON string array
+
+  property    Property    @relation(fields: [propertyId], references: [id])
+  rooms       Room[]
+  ratePlans   RatePlan[]
+  reservations Reservation[]
+  channelMappings ChannelRoomMapping[]
+  inventory   RoomInventory[]
+  holds       BookingHold[]
+
+  @@unique([propertyId, code])
+}
+
+model Room {
+  id         String  @id @default(cuid())
+  propertyId String
+  roomTypeId String
+  number     String
+  floor      Int
+  status     String  @default("vacant") // vacant | occupied | dirty | clean | out_of_order
+  note       String  @default("")
+
+  property     Property            @relation(fields: [propertyId], references: [id])
+  roomType     RoomType            @relation(fields: [roomTypeId], references: [id])
+  tasks        HousekeepingTask[]
+  reservations Reservation[]
+  tickets      MaintenanceTicket[]
+
+  @@unique([propertyId, number])
+}
+
+model Guest {
+  id          String   @id @default(cuid())
+  propertyId  String
+  fullName    String
+  email       String   @default("")
+  phone       String
+  photoUrl    String   @default("") // guest headshot / passport photo (uploaded)
+  idType      String   @default("") // aadhaar | passport | dl | pan
+  idNumber    String   @default("")
+  address     String   @default("")
+  city        String   @default("")
+  nationality String   @default("Indian")
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+
+  property     Property       @relation(fields: [propertyId], references: [id])
+  reservations Reservation[]
+  folioItems   FolioItem[]
+}
+
+model RatePlan {
+  id            String    @id @default(cuid())
+  propertyId    String
+  name          String
+  code          String
+  description   String    @default("")
+  roomTypeId    String? // null = applies to all room types
+  baseRate      Float
+  weekendRate   Float?
+  seasonalStart DateTime?
+  seasonalEnd   DateTime?
+  seasonalRate  Float?
+  inclusions    String    @default("") // "Breakfast, Wi-Fi, Airport pickup"
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+
+  property     Property      @relation(fields: [propertyId], references: [id])
+  roomType     RoomType?     @relation(fields: [roomTypeId], references: [id])
+  reservations Reservation[]
+}
+
+model Reservation {
+  id                 String    @id @default(cuid())
+  propertyId         String
+  confirmationNumber String    @unique
+  guestId            String
+  roomId             String?
+  roomTypeId         String?
+  status             String    @default("confirmed") // hold | confirmed | checked_in | checked_out | cancelled | no_show
+  source             String    @default("front_desk") // front_desk | booking_engine | walk_in | ota | phone
+  checkIn            DateTime
+  checkOut           DateTime
+  nights             Int       @default(1)
+  adults             Int       @default(1)
+  children           Int       @default(0)
+  ratePlanId         String?
+  nightlyRate        Float
+  totalAmount        Float
+  discountAmount     Float     @default(0) // promo discount applied at booking
+  promoCode          String    @default("") // code that produced discountAmount
+  paidAmount         Float     @default(0)
+  idType             String    @default("")
+  idNumber           String    @default("")
+  idProofData        String    @default("") // data URL captured at check-in
+  notes              String    @default("")
+  groupCode          String    @default("")
+  groupMaster        Boolean   @default(false) // designated payer folio for a group booking
+  checkedInAt        DateTime?
+  checkedOutAt       DateTime?
+  createdAt          DateTime  @default(now())
+
+  property   Property    @relation(fields: [propertyId], references: [id])
+  guest      Guest       @relation(fields: [guestId], references: [id])
+  room       Room?       @relation(fields: [roomId], references: [id])
+  roomType   RoomType?   @relation(fields: [roomTypeId], references: [id])
+  ratePlan   RatePlan?   @relation(fields: [ratePlanId], references: [id])
+  folioItems FolioItem[]
+  payments   Payment[]
+  posOrders  PosOrder[]
+  whatsapp   WhatsAppMessage[]
+}
+
+// ─── Billing ─────────────────────────────────────────────────────────────────
+
+model FolioItem {
+  id            String   @id @default(cuid())
+  propertyId    String
+  reservationId String
+  guestId       String?
+  category      String // room | fnb | laundry | misc | tax | discount | no_show | bar
+  description   String
+  qty           Float    @default(1)
+  rate          Float
+  amount        Float
+  businessDate  DateTime
+  locked        Boolean  @default(false) // locked by night audit
+  posOrderId    String   @default("") // plain reference, real FK lives on PosOrder.folioItemId
+  postedBy      String   @default("")
+  clientRef     String   @default("") // idempotency key for offline sync
+  createdAt     DateTime @default(now())
+
+  property     Property    @relation(fields: [propertyId], references: [id])
+  reservation  Reservation @relation(fields: [reservationId], references: [id])
+  guest        Guest?      @relation(fields: [guestId], references: [id])
+  posOrders    PosOrder[]
+}
+
+model Payment {
+  id            String    @id @default(cuid())
+  propertyId    String
+  reservationId String?
+  posOrderId    String?
+  amount        Float
+  method        String // cash | upi | card | netbanking | razorpay
+  status        String    @default("success") // pending | success | failed | refund
+  reference     String    @default("")
+  receivedBy    String    @default("")
+  clientRef     String    @default("") // idempotency key for offline sync
+  createdAt     DateTime  @default(now())
+
+  property     Property    @relation(fields: [propertyId], references: [id])
+  reservation  Reservation? @relation(fields: [reservationId], references: [id])
+  posOrder     PosOrder?   @relation(fields: [posOrderId], references: [id])
+}
+
+// ─── Housekeeping ────────────────────────────────────────────────────────────
+
+model HousekeepingTask {
+  id             String    @id @default(cuid())
+  propertyId     String
+  roomId         String
+  assignedTo     String?
+  taskType       String    @default("cleaning") // cleaning | linen_change | bathroom | inspection | turndown
+  priority       String    @default("normal") // low | normal | high
+  status         String    @default("pending") // pending | in_progress | completed | blocked
+  dueAt          DateTime?
+  notes          String    @default("")
+  photoUrl       String    @default("")
+  completedAt    DateTime?
+  clientRef      String    @default("") // idempotency key for offline sync
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  property   Property @relation(fields: [propertyId], references: [id])
+  room       Room     @relation(fields: [roomId], references: [id])
+  assignedToStaff Staff? @relation("AssignedTasks", fields: [assignedTo], references: [id])
+}
+
+model MaintenanceTicket {
+  id          String    @id @default(cuid())
+  propertyId  String
+  roomId      String?
+  title       String
+  description String    @default("")
+  photoUrl    String    @default("")
+  status      String    @default("open") // open | in_progress | resolved
+  priority    String    @default("normal") // low | normal | high
+  reportedBy  String    @default("")
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  property Property @relation(fields: [propertyId], references: [id])
+  room     Room?    @relation(fields: [roomId], references: [id])
+}
+
+// ─── Restaurant / F&B POS ────────────────────────────────────────────────────
+
+model MenuItem {
+  id          String  @id @default(cuid())
+  propertyId  String
+  name        String
+  category    String // starter | main | dessert | beverage | bar
+  price       Float
+  isVeg       Boolean @default(true)
+  available   Boolean @default(true)
+  description String  @default("")
+  taxRate     Float   @default(5) // GST %
+  sortOrder   Int     @default(0)
+
+  property Property      @relation(fields: [propertyId], references: [id])
+  items    PosOrderItem[]
+}
+
+model PosOrder {
+  id            String    @id @default(cuid())
+  propertyId    String
+  orderNumber   String    @unique
+  orderType     String    @default("dine_in") // dine_in | room_service | takeaway
+  tableNumber   String    @default("")
+  roomNumber    String    @default("")
+  reservationId String?
+  guestName     String    @default("")
+  status        String    @default("pending") // pending | preparing | served | completed | cancelled
+  subtotal      Float     @default(0)
+  taxAmount     Float     @default(0)
+  totalAmount   Float     @default(0)
+  paymentStatus String    @default("unpaid") // unpaid | paid | posted_to_folio
+  paymentMethod String    @default("")
+  folioItemId   String?
+  servedBy      String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  property     Property      @relation(fields: [propertyId], references: [id])
+  reservation  Reservation?  @relation(fields: [reservationId], references: [id])
+  items        PosOrderItem[]
+  payments     Payment[]
+  folioItem    FolioItem?    @relation(fields: [folioItemId], references: [id])
+}
+
+model PosOrderItem {
+  id         String  @id @default(cuid())
+  orderId    String
+  menuItemId String?
+  name       String
+  qty        Int     @default(1)
+  price      Float
+  amount     Float
+  notes      String  @default("")
+  status     String  @default("pending") // pending | preparing | ready | served
+
+  order    PosOrder  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem MenuItem? @relation(fields: [menuItemId], references: [id])
+}
+
+// ─── Night Audit & Logs ──────────────────────────────────────────────────────
+
+model NightAuditLog {
+  id                 String   @id @default(cuid())
+  propertyId         String
+  businessDate       DateTime
+  runBy              String
+  runByName          String   @default("")
+  runAt              DateTime @default(now())
+  totalRevenue       Float    @default(0)
+  roomRevenue        Float    @default(0)
+  fnbRevenue         Float    @default(0)
+  miscRevenue        Float    @default(0)
+  occupancyPercent   Float    @default(0)
+  adr                Float    @default(0)
+  revpar             Float    @default(0)
+  occupiedRooms      Int      @default(0)
+  totalRooms         Int      @default(0)
+  noShowCount        Int      @default(0)
+  noShowCharges      Float    @default(0)
+  outstandingBalance Float    @default(0)
+  notes              String   @default("")
+
+  property Property @relation(fields: [propertyId], references: [id])
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  propertyId String
+  staffId   String   @default("")
+  staffName String   @default("")
+  action    String
+  entity    String   @default("")
+  entityId  String   @default("")
+  details   String   @default("")
+  createdAt DateTime @default(now())
+
+  property Property @relation(fields: [propertyId], references: [id])
+}
+
+model WhatsAppMessage {
+  id           String    @id @default(cuid())
+  propertyId   String
+  toPhone      String
+  templateName String // booking_confirmation | pre_arrival | post_stay | custom
+  body         String
+  status       String    @default("queued") // queued | sent | failed | mock
+  reservationId String?
+  providerId   String    @default("")
+  createdAt    DateTime  @default(now())
+  sentAt       DateTime?
+
+  property    Property     @relation(fields: [propertyId], references: [id])
+  reservation Reservation? @relation(fields: [reservationId], references: [id])
+}
+
+model PromoCode {
+  id            String   @id @default(cuid())
+  propertyId    String
+  code          String   @unique
+  description   String   @default("")
+  discountType  String   @default("percent") // percent | flat
+  discountValue Float
+  validFrom     DateTime
+  validTo       DateTime
+  maxUses       Int      @default(100)
+  usedCount     Int      @default(0)
+  active        Boolean  @default(true)
+
+  property Property @relation(fields: [propertyId], references: [id])
+}
+
+// ─── Channel Manager & Unified Inventory ─────────────────────────────────────
+
+model ChannelConnection {
+  id            String    @id @default(cuid())
+  propertyId    String
+  channel       String // booking_com | expedia | mmt | goibibo | yatra | own_website
+  status        String    @default("disconnected") // connected | disconnected | error
+  credentials   String    @default("") // AES-256-GCM encrypted JSON (apiKey, hotelId, …)
+  isActive      Boolean   @default(true) // pause without disconnecting
+  lastSyncedAt  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  property Property             @relation(fields: [propertyId], references: [id])
+  mappings ChannelRoomMapping[]
+  logs     ChannelSyncLog[]
+  jobs     ChannelSyncJob[]
+
+  @@unique([propertyId, channel])
+}
+
+model ChannelRoomMapping {
+  id                  String @id @default(cuid())
+  channelConnectionId String
+  roomTypeId          String
+  externalRoomTypeId  String @default("") // OTA's own internal room-type id
+
+  connection ChannelConnection @relation(fields: [channelConnectionId], references: [id], onDelete: Cascade)
+  roomType   RoomType          @relation(fields: [roomTypeId], references: [id])
+
+  @@unique([channelConnectionId, roomTypeId])
+}
+
+model RoomInventory {
+  id             String  @id @default(cuid())
+  propertyId     String
+  roomTypeId     String
+  date           String // ISO "2026-09-26" — business date this row controls
+  availableCount Int     @default(0)
+  isOpen         Boolean @default(true)
+  rate           Float? // channel rate for that room type/date (null = plan-derived)
+
+  roomType RoomType          @relation(fields: [roomTypeId], references: [id])
+  property Property          @relation(fields: [propertyId], references: [id])
+  logs     ChannelSyncLog[]
+  jobs     ChannelSyncJob[]
+
+  @@unique([roomTypeId, date])
+  @@index([propertyId, date])
+}
+
+model ChannelSyncJob {
+  id              String    @id @default(cuid())
+  propertyId      String
+  channelConnectionId String? // null = not yet resolved; always resolved per-channel at enqueue
+  roomInventoryId String
+  action          String // open | close | rate_update | full_sync
+  payload         String    @default("{}") // JSON snapshot pushed to adapters
+  status          String    @default("pending") // pending | processing | done | failed
+  attempts        Int       @default(0)
+  lastError       String    @default("")
+  createdAt       DateTime  @default(now())
+  processedAt     DateTime?
+
+  property   Property          @relation(fields: [propertyId], references: [id])
+  connection ChannelConnection? @relation(fields: [channelConnectionId], references: [id])
+  inventory  RoomInventory     @relation(fields: [roomInventoryId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+}
+
+model ChannelSyncLog {
+  id                  String   @id @default(cuid())
+  propertyId          String
+  channelConnectionId String?
+  roomInventoryId     String?
+  channel             String   @default("") // denormalised for log retention after disconnect
+  action              String // open | close | rate_update | full_sync
+  status              String // success | failed | pending
+  message             String   @default("")
+  attemptedAt         DateTime @default(now())
+
+  property   Property           @relation(fields: [propertyId], references: [id])
+  connection ChannelConnection? @relation(fields: [channelConnectionId], references: [id])
+  inventory  RoomInventory?     @relation(fields: [roomInventoryId], references: [id], onDelete: SetNull)
+
+  @@index([propertyId, attemptedAt])
+}
+
+// ─── Booking race-condition guard (holds + idempotency) ──────────────────────
+
+// ─── SaaS Platform — plans, subscriptions, billing, support ───────────────
+
+model Plan {
+  id             String   @id @default(cuid())
+  code           String   @unique // basic | pro | enterprise
+  name           String
+  description    String   @default("")
+  monthlyPrice   Float    @default(0) // INR / month (list price)
+  features       String   @default("{}") // JSON — limits + feature flags, single source of truth (never hard-coded)
+  sortOrder      Int      @default(0)
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id            String    @id @default(cuid())
+  propertyId    String    @unique
+  planId        String
+  cycle         String    @default("monthly") // monthly | quarterly | yearly
+  status        String    @default("trial") // trial | active | overdue | suspended | cancelled | paused
+  startedAt     DateTime  @default(now())
+  renewalAt     DateTime? // next billing / status-review date
+  trialEndsAt   DateTime?
+  autoRenew     Boolean   @default(true)
+  cancelledAt   DateTime?
+  pausedAt      DateTime?
+  pendingPlanId String? // scheduled downgrade applied at next renewal
+  notes         String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  property Property          @relation(fields: [propertyId], references: [id])
+  plan     Plan              @relation(fields: [planId], references: [id])
+  invoices Invoice[]
+}
+
+model SubscriptionAddon {
+  id         String    @id @default(cuid())
+  propertyId String
+  addonKey   String // rooms_pack | staff_pack | whatsapp_pack | ota_pack | setup_fee
+  label      String
+  qty        Int       @default(1)
+  price      Float     @default(0) // monthly-equivalent (or one-off when oneOff)
+  oneOff     Boolean   @default(false)
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+
+  property Property @relation(fields: [propertyId], references: [id])
+}
+
+model FeatureOverride {
+  id         String   @id @default(cuid())
+  propertyId String
+  featureKey String // e.g. pos, rooms, whatsapp_msgs
+  enabled    Boolean? // null = inherit plan
+  limitValue Int? // null = inherit plan
+  note       String   @default("")
+  createdAt  DateTime @default(now())
+
+  property Property @relation(fields: [propertyId], references: [id])
+
+  @@unique([propertyId, featureKey])
+}
+
+model Invoice {
+  id             String    @id @default(cuid())
+  number         String    @unique // VXL-2025-0001 (sequential per GST rules)
+  propertyId     String
+  subscriptionId String?
+  type           String    @default("subscription") // subscription | addon | setup | manual | credit_note
+  status         String    @default("pending") // pending | paid | overdue | refunded | cancelled
+  subtotal       Float     @default(0)
+  discountAmount Float     @default(0)
+  taxAmount      Float     @default(0) // GST
+  totalAmount    Float     @default(0)
+  couponCode     String    @default("")
+  periodStart    DateTime?
+  periodEnd      DateTime?
+  dueDate        DateTime?
+  paidAt         DateTime?
+  notes          String    @default("")
+  createdAt      DateTime  @default(now())
+
+  property     Property          @relation(fields: [propertyId], references: [id])
+  subscription Subscription?     @relation(fields: [subscriptionId], references: [id])
+  items        InvoiceItem[]
+  payments     PlatformPayment[]
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  description String
+  qty         Float   @default(1)
+  unitPrice   Float   @default(0)
+  taxRate     Float   @default(18) // GST %
+  amount      Float   @default(0)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model PlatformPayment {
+  id         String    @id @default(cuid())
+  invoiceId  String?
+  propertyId String
+  amount     Float
+  method     String    @default("razorpay") // razorpay | upi | bank | cash | credit_note
+  status     String    @default("success") // success | pending | failed | refunded
+  reference  String    @default("") // Razorpay link id / UTR / txn ref
+  kind       String    @default("payment") // payment | refund
+  paidAt     DateTime?
+  receivedBy String    @default("")
+  notes      String    @default("")
+  createdAt  DateTime  @default(now())
+
+  invoice  Invoice? @relation(fields: [invoiceId], references: [id])
+  property Property @relation(fields: [propertyId], references: [id])
+}
+
+model Coupon {
+  id            String    @id @default(cuid())
+  code          String    @unique
+  description   String    @default("")
+  discountType  String    @default("percent") // percent | flat
+  discountValue Float     @default(0)
+  maxUses       Int       @default(100)
+  usedCount     Int       @default(0)
+  validFrom     DateTime  @default(now())
+  validTo       DateTime?
+  planCode      String    @default("") // empty = valid on all plans
+  trialDays     Int       @default(0) // >0 → extends trial instead of discounting
+  active        Boolean   @default(true)
+  isDemo        Boolean   @default(false) // flagged seed/demo coupon — hidden from the real owner's console
+  createdAt     DateTime  @default(now())
+
+  redemptions CouponRedemption[]
+}
+
+model CouponRedemption {
+  id         String   @id @default(cuid())
+  couponId   String
+  propertyId String
+  invoiceId  String   @default("")
+  createdAt  DateTime @default(now())
+
+  coupon   Coupon   @relation(fields: [couponId], references: [id])
+  property Property @relation(fields: [propertyId], references: [id])
+}
+
+model SupportTicket {
+  id              String    @id @default(cuid())
+  propertyId      String
+  subject         String
+  category        String    @default("general") // general | billing | technical | feature_request
+  priority        String    @default("normal") // low | normal | high | urgent
+  status          String    @default("open") // open | in_progress | waiting | resolved | closed
+  createdById     String    @default("")
+  createdByName   String    @default("")
+  assignedTo      String    @default("") // platform user id/email
+  firstResponseAt DateTime?
+  resolvedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  property Property        @relation(fields: [propertyId], references: [id])
+  messages TicketMessage[]
+}
+
+model TicketMessage {
+  id         String   @id @default(cuid())
+  ticketId   String
+  authorType String   @default("tenant") // tenant | platform
+  authorName String
+  body       String
+  internal   Boolean  @default(false) // internal owner note — never shown to the tenant
+  createdAt  DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+}
+
+model Announcement {
+  id          String   @id @default(cuid())
+  title       String
+  body        String
+  audience    String   @default("all") // all | plan | tenants
+  planCode    String   @default("") // when audience=plan
+  propertyIds String   @default("[]") // JSON array when audience=tenants
+  channel     String   @default("in_app") // in_app | email | whatsapp
+  active      Boolean  @default(true)
+  isDemo      Boolean  @default(false) // flagged seed/demo announcement — hidden from the real owner's console
+  createdBy   String   @default("")
+  createdAt   DateTime @default(now())
+
+  reads AnnouncementRead[]
+}
+
+model AnnouncementRead {
+  id             String   @id @default(cuid())
+  announcementId String
+  propertyId     String
+  readAt         DateTime @default(now())
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  property     Property     @relation(fields: [propertyId], references: [id])
+
+  @@unique([announcementId, propertyId])
+}
+
+model OnboardingChecklist {
+  id                String   @id @default(cuid())
+  propertyId        String   @unique
+  roomsAdded        Boolean  @default(false)
+  staffCreated      Boolean  @default(false)
+  otaConnected      Boolean  @default(false)
+  firstBooking      Boolean  @default(false)
+  credentialsSent   Boolean  @default(false)
+  whatsappConnected Boolean  @default(false) // ticked when the tenant connects the WhatsApp Cloud API
+  notes             String   @default("")
+  updatedAt         DateTime @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id])
+}
+
+model Lead {
+  id           String   @id @default(cuid())
+  businessName String
+  contactName  String
+  email        String   @default("")
+  phone        String   @default("")
+  city         String   @default("")
+  status       String   @default("demo_requested") // demo_requested | demo_done | trial_started | converted | lost
+  notes        String   @default("")
+  isDemo       Boolean  @default(false) // flagged seed/demo lead — hidden from the real owner's console
+  propertyId   String? // set when converted
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model UsageMetric {
+  id           String   @id @default(cuid())
+  propertyId   String
+  date         String // ISO date snapshot
+  roomsUsed    Int      @default(0)
+  staffUsed    Int      @default(0)
+  bookings     Int      @default(0)
+  whatsappMsgs Int      @default(0)
+  posOrders    Int      @default(0)
+  lastActiveAt DateTime?
+  createdAt    DateTime @default(now())
+
+  property Property @relation(fields: [propertyId], references: [id])
+
+  @@unique([propertyId, date])
+}
+
+model PlatformUser {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         String    @default("software_owner")
+  active       Boolean   @default(true)
+  isDemo       Boolean   @default(false) // demo owner account — sees demo seed data in the console
+  lastLoginAt  DateTime?
+  mustChangePassword Boolean @default(false) // true = temp password issued; force reset on next login
+  // ── Two-factor authentication (TOTP) ──
+  totpSecret        String? // AES-256-GCM encrypted seed (v1:iv:tag:cipher) — never stored plaintext
+  totpEnabled       Boolean @default(false)
+  totpRecoveryCodes String? // JSON array of scrypt-hashed single-use recovery codes
+  createdAt    DateTime  @default(now())
+}
+
+model PlatformAuditLog {
+  id         String   @id @default(cuid())
+  actorId    String   @default("")
+  actorName  String   @default("")
+  action     String // e.g. PLAN_CHANGE, SUSPEND, IMPERSONATE_START, REFUND
+  entity     String   @default("")
+  entityId   String   @default("")
+  details    String   @default("")
+  propertyId String   @default("") // tenant context when relevant
+  createdAt  DateTime @default(now())
+}
+
+model PlatformSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String   @default("") // encrypted when sensitive=true
+  encrypted Boolean  @default(false)
+  updatedBy String   @default("")
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Per-tenant WhatsApp Cloud API credentials (self-service connect) ────────
+
+model WhatsAppConfig {
+  id             String    @id @default(cuid())
+  propertyId     String    @unique
+  displayPhone   String    @default("") // WhatsApp display number, e.g. +91 98xxx
+  phoneNumberId  String    @default("") // Meta Phone Number ID
+  wabaId         String    @default("") // WhatsApp Business Account ID
+  accessTokenEnc String    @default("") // System-user access token, AES-256-GCM encrypted (never returned in full)
+  verifyToken    String    @default("") // webhook verify token (shown to the tenant for Meta App dashboard)
+  status         String    @default("disconnected") // disconnected | connected | error
+  lastError      String    @default("")
+  lastCheckedAt  DateTime?
+  connectedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id])
+}
+
+// ─── Booking race-condition guard (holds + idempotency) ──────────────────
+
+model BookingHold {
+  id             String   @id @default(cuid())
+  propertyId     String
+  roomTypeId     String
+  checkIn        DateTime
+  checkOut       DateTime
+  nights         Int      @default(1)
+  adults         Int      @default(1)
+  children       Int      @default(0)
+  guestName      String   @default("")
+  guestPhone     String   @default("")
+  // active = room reserved | redeemed = turned into a reservation
+  // released = freed (payment failed / guest abandoned) | expired = TTL elapsed
+  status         String   @default("active")
+  idempotencyKey String   @unique
+  // Price locked at hold time — the reservation is created on these totals.
+  totalAmount    Float    @default(0) // net room revenue after discount
+  discountAmount Float    @default(0)
+  promoCode      String   @default("")
+  taxAmount      Float    @default(0)
+  grandTotal     Float    @default(0)
+  gatewayRef     String   @default("") // Razorpay-shaped order/payment id
+  reservationId  String   @default("") // set when redeemed
+  tag            String   @default("") // e.g. "stress-test" for guard simulations
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  property Property  @relation(fields: [propertyId], references: [id])
+  roomType RoomType? @relation(fields: [roomTypeId], references: [id])
+
+  @@index([propertyId, status, expiresAt])
+}
