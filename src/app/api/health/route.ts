@@ -55,7 +55,9 @@ export async function GET() {
       counts,
       latencyMs: Date.now() - startedAt,
       ts: new Date().toISOString(),
-      ...(dbError ? { dbError } : {}),
+      // Sanitized for a PUBLIC endpoint: never echo the raw driver error here
+      // (it can disclose the database host). Real details live in function logs.
+      ...(dbError ? { dbError: "unable to reach database" } : {}),
     },
     { status: ok ? 200 : 503 },
   );
