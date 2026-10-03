@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomBytes } from "crypto";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { encryptJSON } from "@/lib/crypto";
-import { CHANNEL_DEFS, getAdapter, type ChannelKey } from "@/lib/channel-adapters";
+import {
+  CHANNEL_DEFS, getAdapter, getLinkMethodDef, validateCredentialFields,
+  type ChannelKey, type LinkMethod,
+} from "@/lib/channel-adapters";
 import { logActivity } from "@/lib/business";
 import { getTenantEntitlements, assertWritable, checkLimit } from "@/lib/entitlements";
 
@@ -15,6 +19,14 @@ export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if ("error" in auth) return auth.error;
   const propertyId = auth.session.propertyId;
+
+  // Entitlement snapshot lets the UI show channel-slot usage and pre-disable
+  // Connect when the plan cap is reached (instead of a raw 403 on submit).
+  const ent = await getTenantEntitlements(propertyId);
+  const otaLimit = ent.limits.ota_channels ?? 0;
+  const connCount = await db.channelConnection.count({ where: { propertyId } });
+  const unlimited = otaLimit === -1;
+  const remaining = unlimited ? null : Math.max(0, otaLimit - connCount);
 
   const [connections, roomTypes, jobStats] = await Promise.all([
     db.channelConnection.findMany({
@@ -53,6 +65,11 @@ export async function GET(req: NextRequest) {
         status: conn.status,
         isActive: conn.isActive,
         lastSyncedAt: conn.lastSyncedAt,
+        linkMethod: conn.linkMethod as LinkMethod,
+        // Outbound link URLs (token-authenticated — safe to show to the tenant;
+        // the token is what OTA extranets paste, so it is not treated as a secret in UI).
+        icalUrl: conn.linkToken ? `${req.nextUrl.origin}/api/channels/ical/${conn.linkToken}` : null,
+        webhookUrl: conn.linkToken ? `${req.nextUrl.origin}/api/channels/webhook/${conn.linkToken}` : null,
         mappedRoomTypes: conn.mappings.filter((m) => m.externalRoomTypeId).length,
         queue: q,
       },
@@ -63,13 +80,25 @@ export async function GET(req: NextRequest) {
     channels,
     roomTypes,
     supported: CHANNEL_DEFS.map((d) => d.key),
+    otaChannels: {
+      used: connCount,
+      limit: otaLimit, // -1 = unlimited
+      remaining,
+      canConnect: unlimited || connCount < otaLimit,
+      planName: ent.plan?.name ?? null,
+    },
   });
 }
 
 /**
- * POST /api/channels — connect a channel. Body: { channel, credentials }.
- * Credentials are validated through the channel adapter, then stored
- * AES-256-GCM encrypted per tenant. Own website needs no credentials.
+ * POST /api/channels — connect a channel with the tenant's chosen link
+ * technology. Body: { channel, method?, credentials }.
+ *   method = "api_keys" (classic XML/REST push) | "oauth2" (scoped token
+ *   handshake) | "ical" (universal calendar URLs).
+ * Credentials are validated through the method's field spec, then stored
+ * AES-256-GCM encrypted per tenant. A linkToken is minted for the outbound
+ * iCal export + webhook URLs shown after connecting. Own website needs no
+ * credentials.
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req, ["hotel_admin"]);
@@ -84,26 +113,46 @@ export async function POST(req: NextRequest) {
   const capped = checkLimit(ent, "ota_channels", connCount, "OTA channels");
   if (capped) return capped;
 
-  const body = (await req.json().catch(() => null)) as { channel?: string; credentials?: Record<string, string> } | null;
+  const body = (await req.json().catch(() => null)) as {
+    channel?: string; method?: string; credentials?: Record<string, string>;
+  } | null;
   if (!body?.channel) return NextResponse.json({ error: "channel is required" }, { status: 400 });
 
   const key = body.channel as ChannelKey;
   const adapter = getAdapter(key);
   if (!adapter) return NextResponse.json({ error: `Unsupported channel "${body.channel}"` }, { status: 400 });
 
+  const def = CHANNEL_DEFS.find((d) => d.key === key);
+  // Resolve the link method against what the channel actually offers.
+  const requested = body.method ?? "api_keys";
+  const methodDef = def ? getLinkMethodDef(def, requested) : undefined;
+  const method: LinkMethod = (methodDef?.method ?? "api_keys") as LinkMethod;
   const credentials = key === "own_website" ? {} : body.credentials ?? {};
-  const test = await adapter.testConnection(credentials);
+  const fieldErrors = key === "own_website" || !methodDef
+    ? {}
+    : validateCredentialFields(methodDef.fields, credentials);
+  const test = await adapter.testConnection(credentials, method);
   if (!test.ok) {
-    return NextResponse.json({ error: test.message }, { status: 422 });
+    return NextResponse.json(
+      { error: test.message, fieldErrors: Object.keys(fieldErrors).length > 0 ? fieldErrors : undefined },
+      { status: 422 },
+    );
   }
 
   const existing = await db.channelConnection.findUnique({
     where: { propertyId_channel: { propertyId, channel: key } },
   });
 
+  // Mint (or reuse) the secret that authenticates the tenant's outbound link
+  // URLs: the iCal export the tenant pastes into the OTA extranet and the
+  // webhook endpoint OTAs push booking events to.
+  const linkToken = existing?.linkToken ?? (key === "own_website" ? null : randomBytes(24).toString("base64url"));
+
   const data = {
     status: "connected" as const,
     credentials: encryptJSON(credentials),
+    linkMethod: method,
+    ...(linkToken ? { linkToken } : {}),
     isActive: true,
   };
 
@@ -130,11 +179,16 @@ export async function POST(req: NextRequest) {
     action: "CHANNEL_CONNECT",
     entity: "ChannelConnection",
     entityId: conn.id,
-    details: `Connected ${key.replace("_", " ")} channel${key === "own_website" ? " (booking engine)" : ""} — credentials encrypted at rest`,
+    details: `Connected ${key.replace("_", " ")} channel via ${method === "api_keys" ? "API keys" : method === "oauth2" ? "OAuth 2.0" : "iCal calendar sync"}${key === "own_website" ? " (booking engine)" : ""} — credentials encrypted at rest`,
   });
 
   return NextResponse.json({
-    connection: { id: conn.id, channel: conn.channel, status: conn.status, isActive: conn.isActive },
+    connection: {
+      id: conn.id, channel: conn.channel, status: conn.status, isActive: conn.isActive,
+      linkMethod: conn.linkMethod,
+      icalUrl: conn.linkToken ? `${req.nextUrl.origin}/api/channels/ical/${conn.linkToken}` : null,
+      webhookUrl: conn.linkToken ? `${req.nextUrl.origin}/api/channels/webhook/${conn.linkToken}` : null,
+    },
     message: test.message,
   });
 }

@@ -446,7 +446,13 @@ model ChannelConnection {
   propertyId    String
   channel       String // booking_com | expedia | mmt | goibibo | yatra | own_website
   status        String    @default("disconnected") // connected | disconnected | error
-  credentials   String    @default("") // AES-256-GCM encrypted JSON (apiKey, hotelId, …)
+  credentials   String    @default("") // AES-256-GCM encrypted JSON (apiKey, hotelId, clientId, …)
+  // Link method the tenant chose: api_keys (XML/direct) | oauth2 (scoped token handshake) | ical (calendar URLs)
+  linkMethod    String    @default("api_keys")
+  // Secret token that authenticates the tenant's outbound link URLs:
+  //   iCal export  /api/channels/ical/{linkToken}   (OTA extranets pull this)
+  //   webhook      /api/channels/webhook/{linkToken} (OTAs push booking events)
+  linkToken     String?   @unique
   isActive      Boolean   @default(true) // pause without disconnecting
   lastSyncedAt  DateTime?
   createdAt     DateTime  @default(now())

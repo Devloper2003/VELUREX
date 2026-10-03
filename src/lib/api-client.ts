@@ -25,8 +25,9 @@ export async function api<T = unknown>(path: string, options: RequestInit = {}):
   }
   if (!res.ok) {
     const msg = (data as { error?: string })?.error || `Request failed (${res.status})`;
-    const err = new Error(msg) as Error & { status?: number };
+    const err = new Error(msg) as Error & { status?: number; body?: unknown };
     err.status = res.status;
+    err.body = data; // full payload — e.g. { error, fieldErrors } for inline form errors
     throw err;
   }
   return data as T;
