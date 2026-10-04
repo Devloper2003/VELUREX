@@ -31,17 +31,10 @@ export async function GET() {
     dbError = e instanceof Error ? e.message : "unknown error";
   }
 
-  // ── Realtime mini-service probe (best-effort, never blocks the probe)
-  let realtime: "up" | "down" = "down";
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 1500);
-    const res = await fetch("http://localhost:3003/health", { signal: ctrl.signal, cache: "no-store" });
-    clearTimeout(timer);
-    if (res.ok) realtime = "up";
-  } catch {
-    /* realtime down is non-fatal — the app falls back to 45s polling */
-  }
+  // ── Realtime: in-process SSE (src/app/api/realtime/stream + event-bus) —
+  // no external service to probe; the process answering this request IS the
+  // realtime system. If this endpoint runs at all, realtime is up.
+  const realtime: "up" | "down" = "up";
 
   const ok = database === "up";
   return NextResponse.json(

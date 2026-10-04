@@ -81,6 +81,8 @@ export function AppShell() {
   const [unread, setUnread] = useState(0);
   const [live, setLive] = useState<RealtimeStatus>("connecting");
   const [syncedAt, setSyncedAt] = useState<Date | null>(null);
+  const pollNewestRef = useRef(0); // watermark for the polling-floor refresh
+  const pollPrimedRef = useRef(false); // first pass only primes the watermark
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -311,6 +313,35 @@ export function AppShell() {
     },
     (status) => setLive(status)
   );
+
+  // Polling floor: when realtime push is unavailable (host/network without SSE
+  // support), refresh notifications and the sync marker every 45s so "Polling"
+  // is an honest, working mode — not just a label.
+  useEffect(() => {
+    if (!token || live === "online") return;
+    const tick = async () => {
+      try {
+        const res = await fetch("/api/notifications", { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const j = (await res.json()) as { items?: Array<{ id: string; createdAt: string }> };
+        const newest = j.items?.[0]?.createdAt ? new Date(j.items[0].createdAt).getTime() : 0;
+        if (newest) {
+          if (!pollPrimedRef.current) {
+            pollPrimedRef.current = true; // first pass only primes the watermark
+          } else if (newest > pollNewestRef.current && !notifOpenRef.current) {
+            setUnread((u) => Math.min(u + 1, 99));
+          }
+          pollNewestRef.current = newest;
+        }
+        setSyncedAt(new Date());
+      } catch {
+        /* offline — next tick retries */
+      }
+    };
+    void tick();
+    const id = setInterval(tick, 45_000);
+    return () => clearInterval(id);
+  }, [token, live]);
 
   if (!user) return null;
 

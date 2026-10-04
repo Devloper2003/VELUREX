@@ -12,6 +12,21 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.1.0] — 2026-10-04 · Always Live
+
+### Fixed — realtime status stuck on "Polling"
+- **Root cause**: the browser's socket.io client connected through the sandbox gateway (`/?XTransformPort=3003`), which does not route bare-`/` requests — the handshake got Next.js HTML back, so the realtime connection never established and the topbar permanently showed "Polling". Any deployment without that gateway had the same problem by design.
+
+### Changed — in-app realtime (Server-Sent Events)
+- New in-process event bus (`src/lib/event-bus.ts`) + `GET /api/realtime/stream` SSE endpoint: same-origin, authenticated by the existing session cookie/proxy, heartbeat every 25s, auto-reconnect. No extra port, no gateway dependency — works on every host the app runs on.
+- `emitRealtime` (used by ~15 server call sites: POS/KOT, folio, night audit, activity log, channel sync) now publishes to the bus — call sites unchanged.
+- Client (`src/lib/realtime.ts`) rewritten on `EventSource` with the identical public API (`connectRealtime`, `useRealtime`, `pingRealtime` via new `GET /api/realtime/ping`).
+- `GET /api/health` no longer probes the external service — realtime is reported from the process itself.
+- **Polling floor**: when push is unavailable, the shell refreshes notifications and the sync marker every 45s — "Polling" is now an honest, working fallback mode.
+- The standalone realtime mini-service keeps running (dev-server keeper role) but is no longer on the critical path.
+
+---
+
 ## [2.0.1] — 2026-10-04 · Polish Patch
 
 ### Changed

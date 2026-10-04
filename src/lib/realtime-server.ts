@@ -1,18 +1,18 @@
 /**
- * Server-side realtime emit helper (Next.js route handlers → mini-service).
+ * Server-side realtime emit helper (Next.js route handlers → in-process bus).
  *
- * Fire-and-forget POST to the realtime mini-service (localhost:3003, /emit).
+ * Events are published on the in-process event bus (src/lib/event-bus.ts) and
+ * fanned out to browsers by the SSE stream route (/api/realtime/stream).
  * Never throws, never blocks the response: realtime push is best-effort —
- * if the mini-service is down the API response is unaffected and clients
- * fall back to their normal polling refresh.
+ * if no client is subscribed the event is simply dropped and UIs fall back
+ * to their normal polling refresh.
  *
  * Usage inside route handlers:
  *   await emitRealtime("global", "activity:new", { title, details });
  *   emitRealtime("kitchen", "kot:update", { orderId, status }); // void, no await needed
  */
 
-const RT_URL = "http://localhost:3003/emit";
-const RT_SECRET = process.env.RT_SECRET ?? "velurex-rt-dev-secret";
+import { publishEvent } from "@/lib/event-bus";
 
 export type RealtimeChannel = "global" | "kitchen" | (string & {});
 
@@ -22,12 +22,9 @@ export function emitRealtime(
   data: unknown,
 ): void {
   // Swallow all errors — realtime is best-effort by design.
-  fetch(RT_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret: RT_SECRET, channel, event, data }),
-    signal: AbortSignal.timeout(1500),
-  }).catch(() => {
-    /* mini-service unreachable — ignore */
-  });
+  try {
+    publishEvent(channel, event, data);
+  } catch {
+    /* event bus can never realistically throw; belt and braces */
+  }
 }

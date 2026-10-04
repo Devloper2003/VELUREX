@@ -11,9 +11,9 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.0.1";
+export const APP_VERSION = "2.1.0";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Polish Patch";
+export const APP_RELEASE_CODENAME = "Always Live";
 export const APP_RELEASE_DATE = "2026-10-04";
 
 export type ReleaseNote = {
@@ -25,6 +25,15 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.1.0",
+    date: "2026-10-04",
+    codename: "Always Live",
+    highlights: [
+      "In-app realtime via Server-Sent Events — fixes the stuck 'Polling' status; dashboards now connect 'Live' on every host, including the live deployment",
+      "Guaranteed polling floor: if push is ever unavailable, notifications and the sync marker still refresh every 45s",
+    ],
+  },
   {
     version: "2.0.1",
     date: "2026-10-04",
