@@ -16,8 +16,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Loader2, Search, BedDouble, Users, Maximize, Check, ChevronDown, ShieldCheck,
   MessageCircle, Sparkles, CalendarDays, ArrowLeft, Copy, CheckCircle2, XCircle,
-  Landmark, Wallet, Tag, Info, Star, Timer, AlertTriangle,
+  Landmark, Wallet, Tag, Info, Star, Timer, AlertTriangle, Clock,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -29,14 +30,30 @@ interface ConfigRoomType {
   maxOccupancy: number;
   description: string;
   amenities: string[];
+  photos: string[];
   sizeSqft: number;
   bedType: string;
+}
+interface ConfigPolicy {
+  checkInTime: string;
+  checkOutTime: string;
+  cancellationPolicy: string;
+  minNights: number;
+}
+interface ConfigUpsell {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  priceType: string;
 }
 interface ConfigResponse {
   hotelName: string;
   city: string;
   currency: string;
+  policy: ConfigPolicy;
   roomTypes: ConfigRoomType[];
+  upsells: ConfigUpsell[];
 }
 interface QuotedRoomType extends ConfigRoomType {
   available: number;
@@ -73,9 +90,16 @@ interface BookResponse {
   whatsappStatus: string;
   roomTotal: number;
   discount: number;
+  upsellAmount?: number;
+  upsellDetail?: { name: string; amount: number; priceType: string }[];
   taxAmount: number;
   promoApplied: boolean;
   promoCode?: string | null;
+}
+interface UpsellLine {
+  name: string;
+  amount: number;
+  priceType: string;
 }
 interface HoldResponse {
   holdId: string;
@@ -88,6 +112,8 @@ interface HoldResponse {
   totalAmount: number;
   discountAmount: number;
   promoApplied: string | null;
+  upsellAmount: number;
+  upsellDetail: UpsellLine[];
   taxAmount: number;
   grandTotal: number;
 }
@@ -125,7 +151,7 @@ function fmtDay(iso: string): string {
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
-type Step = "rooms" | "guest" | "confirmed";
+type Step = "rooms" | "addons" | "guest" | "confirmed";
 
 export default function BookPage() {
   // Storefront config (public)
@@ -149,6 +175,10 @@ export default function BookPage() {
   const [step, setStep] = useState<Step>("rooms");
   const [selected, setSelected] = useState<QuotedRoomType | null>(null);
   const guestRef = useRef<HTMLDivElement | null>(null);
+  const addonsRef = useRef<HTMLDivElement | null>(null);
+
+  // Add-ons (upsells) selected for this booking
+  const [selectedUpsellIds, setSelectedUpsellIds] = useState<string[]>([]);
 
   // Promo
   const [promoInput, setPromoInput] = useState("");
@@ -213,13 +243,32 @@ export default function BookPage() {
 
   const nights = useMemo(() => nightsBetween(checkIn, checkOut), [checkIn, checkOut]);
   const dateInvalid = nights < 1 || nights > 31;
+  const policy = config?.policy;
+  const minNights = Math.max(1, policy?.minNights ?? 1);
+  const belowMinNights = nights >= 1 && nights < minNights;
+
+  // ── Upsell helpers (mirror the server's resolveUpsells math) ──
+  const upsellUnitPrice = useCallback(
+    (u: ConfigUpsell) =>
+      u.priceType === "per_night" ? u.price * nights : u.priceType === "per_guest" ? u.price * adults : u.price,
+    [nights, adults]
+  );
+  const upsellTotal = useMemo(() => {
+    if (!config) return 0;
+    return Math.round(config.upsells.filter((u) => selectedUpsellIds.includes(u.id)).reduce((s, u) => s + upsellUnitPrice(u), 0) * 100) / 100;
+  }, [config, selectedUpsellIds, upsellUnitPrice]);
 
   const runSearch = useCallback(async () => {
-    if (dateInvalid) return;
-    setAvailLoading(true);
-    setAvailError(null);
     setSearched(true);
     setSelected(null);
+    if (dateInvalid || belowMinNights) {
+      // Blocked client-side — the exact reason is rendered under the search card.
+      setAvailability(null);
+      setAvailError(null);
+      return;
+    }
+    setAvailLoading(true);
+    setAvailError(null);
     try {
       const r = await fetch(
         `/api/booking-engine/availability?checkIn=${checkIn}&checkOut=${checkOut}&adults=${adults}`
@@ -233,7 +282,7 @@ export default function BookPage() {
     } finally {
       setAvailLoading(false);
     }
-  }, [checkIn, checkOut, adults, dateInvalid]);
+  }, [checkIn, checkOut, adults, dateInvalid, belowMinNights]);
 
   // Auto-run an initial search so the page never looks empty
   useEffect(() => {
@@ -242,9 +291,20 @@ export default function BookPage() {
 
   function pickRoom(rt: QuotedRoomType) {
     setSelected(rt);
+    setSelectedUpsellIds([]);
+    setStep("addons");
+    setFormError(null);
+    setTimeout(() => addonsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  }
+
+  function continueToGuest() {
     setStep("guest");
     setFormError(null);
     setTimeout(() => guestRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  }
+
+  function toggleUpsell(id: string) {
+    setSelectedUpsellIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
   async function applyPromo() {
@@ -267,10 +327,14 @@ export default function BookPage() {
 
   const discount = promo?.valid ? (promo.discount ?? 0) : 0;
   const netTotal = Math.max(0, (selected?.total ?? 0) - discount);
-  const taxAmount = Math.round(netTotal * 0.12 * 100) / 100;
-  const grandTotal = Math.round((netTotal + taxAmount) * 100) / 100;
+  // Pricing parity with the server: add-ons are taxed together with net room
+  // revenue (promo discount applies to rooms only).
+  const taxableBase = netTotal + upsellTotal;
+  const taxAmount = Math.round(taxableBase * 0.12 * 100) / 100;
+  const grandTotal = Math.round((taxableBase + taxAmount) * 100) / 100;
 
   function validateForm(): string | null {
+    if (belowMinNights) return `Minimum stay of ${minNights} nights for your dates`;
     if (!guest.fullName.trim() || guest.fullName.trim().length < 3) return "Please enter the lead guest's full name";
     const digits = guest.phone.replace(/\D/g, "");
     if (digits.length < 10) return "Please enter a valid 10-digit mobile number";
@@ -314,6 +378,7 @@ export default function BookPage() {
           guestName: guest.fullName.trim(),
           guestPhone: guest.phone.trim(),
           promoCode: promo?.valid ? promo.code : undefined,
+          upsellIds: selectedUpsellIds.length > 0 ? selectedUpsellIds : undefined,
           idempotencyKey: idemKeyRef.current,
         }),
       });
@@ -372,6 +437,8 @@ export default function BookPage() {
             whatsappStatus: "queued",
             roomTotal: hold.totalAmount + hold.discountAmount,
             discount: hold.discountAmount,
+            upsellAmount: hold.upsellAmount,
+            upsellDetail: hold.upsellDetail,
             taxAmount: hold.taxAmount,
             promoApplied: Boolean(hold.promoApplied),
             promoCode: hold.promoApplied,
@@ -447,6 +514,7 @@ export default function BookPage() {
           adults,
           children,
           promoCode: promo?.valid ? promo.code : undefined,
+          upsellIds: selectedUpsellIds.length > 0 ? selectedUpsellIds : undefined,
           mockPaid,
           idempotencyKey: idemKeyRef.current,
         }),
@@ -473,6 +541,7 @@ export default function BookPage() {
     setPayModeRaw("hotel");
     setHold(null);
     setPayFailure(null);
+    setSelectedUpsellIds([]);
     idemKeyRef.current = "";
     setSearched(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -562,6 +631,26 @@ export default function BookPage() {
                     </dd>
                   </div>
                 </dl>
+
+                {/* Add-ons breakdown (when the guest selected extras) */}
+                {typeof confirmed.upsellAmount === "number" && confirmed.upsellAmount > 0 && (
+                  <div className="rounded-md border border-brass/30 bg-brass-50/40 px-3.5 py-3 text-[13px] space-y-1.5" aria-label="Add-ons">
+                    <p className="text-[10px] uppercase tracking-wider font-semibold text-brass flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5" /> Add-ons included in your stay
+                    </p>
+                    {(confirmed.upsellDetail ?? []).map((l, i) => (
+                      <p key={`${l.name}-${i}`} className="flex items-center justify-between gap-3">
+                        <span className="text-ink">{l.name}</span>
+                        <span className="tabular-nums">{money2(l.amount)}</span>
+                      </p>
+                    ))}
+                    <p className="flex items-center justify-between gap-3 border-t border-brass/25 pt-1.5 font-medium text-pine">
+                      <span>Add-ons subtotal (GST added in total)</span>
+                      <span className="tabular-nums">{money2(confirmed.upsellAmount)}</span>
+                    </p>
+                  </div>
+                )}
+
                 <div className="flex items-start gap-2 rounded-md border border-pine-700/25 bg-pine-100/60 px-3 py-2.5 text-[13px] text-pine">
                   <MessageCircle className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>
@@ -633,20 +722,107 @@ export default function BookPage() {
                     Check Availability
                   </button>
                 </div>
-                <p className={`text-[12px] mt-2 flex items-center gap-1.5 ${dateInvalid ? "text-danger" : "text-muted-ink"}`} aria-live="polite">
+                <p className={`text-[12px] mt-2 flex items-center gap-1.5 ${dateInvalid || belowMinNights ? "text-danger" : "text-muted-ink"}`} aria-live="polite">
                   <Info className="h-3.5 w-3.5 shrink-0" />
                   {dateInvalid
                     ? "Stays can be 1–31 nights — adjust your dates."
-                    : `${nights} night${nights === 1 ? "" : "s"} · ${adults} adult${adults === 1 ? "" : "s"}${children > 0 ? ` · ${children} child${children === 1 ? "" : "ren"}` : ""} · taxes included at checkout`}
+                    : belowMinNights
+                      ? `Minimum stay of ${minNights} nights for your dates — please add a night.`
+                      : `${nights} night${nights === 1 ? "" : "s"} · ${adults} adult${adults === 1 ? "" : "s"}${children > 0 ? ` · ${children} child${children === 1 ? "" : "ren"}` : ""} · taxes included at checkout`}
                 </p>
               </div>
             </section>
 
+            {/* ── Policy strip (storefront settings) ─────────────────────── */}
+            {policy && (
+              <section className="max-w-4xl mx-auto px-4 sm:px-6 mt-4 w-full" aria-label="Hotel policies">
+                <div className="flex flex-wrap items-center gap-2 text-[12px]">
+                  <span className="badge border-pine-700/25 bg-pine-100/60 text-pine-700"><ShieldCheck className="h-3.5 w-3.5" /> Official & secure</span>
+                  <span className="badge border-line-strong bg-panel text-ink"><Clock className="h-3.5 w-3.5 text-brass" /> Check-in {policy.checkInTime} · Check-out {policy.checkOutTime}</span>
+                  <span className="badge border-line-strong bg-panel text-ink">Min {policy.minNights} night{policy.minNights === 1 ? "" : "s"}</span>
+                  <span className="badge border-ok/35 bg-ok/10 text-ok">Free cancellation</span>
+                </div>
+              </section>
+            )}
+
+            {/* ── Add-ons step (between room pick and guest details) ─────── */}
+            {step === "addons" && selected && (
+              <section ref={addonsRef} className="max-w-6xl mx-auto px-4 sm:px-6 py-10 w-full scroll-mt-20" aria-label="Add-ons">
+                <button className="btn-ghost mb-4" onClick={() => { setStep("rooms"); setSelected(null); }}>
+                  <ArrowLeft className="h-4 w-4" /> Back to rooms
+                </button>
+                <h2 className="section-title">Make it special — optional add-ons</h2>
+                <p className="text-[13px] text-muted-ink mt-1">
+                  {selected.name} · {fmtDay(checkIn)} → {fmtDay(checkOut)} · {nights} night{nights === 1 ? "" : "s"} · {adults} adult{adults === 1 ? "" : "s"}
+                </p>
+
+                {config && config.upsells.length > 0 ? (
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {config.upsells.map((u) => {
+                      const active = selectedUpsellIds.includes(u.id);
+                      const amount = upsellUnitPrice(u);
+                      return (
+                        <button
+                          key={u.id}
+                          type="button"
+                          role="checkbox"
+                          aria-checked={active}
+                          onClick={() => toggleUpsell(u.id)}
+                          className={cn(
+                            "panel p-4 h-auto text-left transition-all",
+                            active ? "border-brass ring-1 ring-brass/40 bg-brass-50/40" : "hover:border-brass/50"
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="flex items-center gap-2 min-w-0">
+                              <span
+                                className={cn(
+                                  "grid h-5 w-5 shrink-0 place-items-center rounded border",
+                                  active ? "border-brass bg-brass text-panel" : "border-line-strong bg-panel"
+                                )}
+                                aria-hidden
+                              >
+                                {active && <Check className="h-3.5 w-3.5" />}
+                              </span>
+                              <span className="text-sm font-medium text-pine truncate">{u.name}</span>
+                            </span>
+                            <span className="font-display font-semibold text-brass shrink-0">{money(amount)}</span>
+                          </div>
+                          {u.description && <p className="text-[12px] text-muted-ink mt-1.5 leading-relaxed">{u.description}</p>}
+                          <p className="text-[11px] text-muted-ink mt-2">
+                            {u.priceType === "per_night"
+                              ? `${money(u.price)} × ${nights} night${nights === 1 ? "" : "s"} = ${money2(amount)}`
+                              : u.priceType === "per_guest"
+                                ? `${money(u.price)} × ${adults} guest${adults === 1 ? "" : "s"} = ${money2(amount)}`
+                                : "one-time charge"}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="mt-5 text-sm text-muted-ink">No add-ons are offered for this stay — continue to your details.</p>
+                )}
+
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm text-muted-ink" aria-live="polite">
+                    Selected: <b className="text-pine">{selectedUpsellIds.length}</b>
+                    {selectedUpsellIds.length > 0 && (
+                      <> · <b className="text-brass">{money2(upsellTotal)}</b> <span className="text-[11px]">(GST added at checkout)</span></>
+                    )}
+                  </p>
+                  <button className="btn-pine h-10 px-6" onClick={continueToGuest}>
+                    Continue to guest details <Check className="h-4 w-4" />
+                  </button>
+                </div>
+              </section>
+            )}
+
             {/* ── Guest details + pay (selected room) ────────────────────── */}
             {step === "guest" && selected && (
               <section ref={guestRef} className="max-w-6xl mx-auto px-4 sm:px-6 py-10 w-full scroll-mt-20" aria-label="Guest details">
-                <button className="btn-ghost mb-4" onClick={() => { setStep("rooms"); setSelected(null); }}>
-                  <ArrowLeft className="h-4 w-4" /> Back to rooms
+                <button className="btn-ghost mb-4" onClick={() => setStep("addons")}>
+                  <ArrowLeft className="h-4 w-4" /> Back to add-ons
                 </button>
                 <div className="grid lg:grid-cols-[1fr_380px] gap-5 items-start">
                   {/* Form */}
@@ -770,16 +946,22 @@ export default function BookPage() {
                         </div>
                       )}
 
-                      <button className="btn-pine w-full h-10 text-[15px]" onClick={confirmBooking} disabled={booking || holdBusy}>
+                      <button
+                        className="btn-pine w-full h-10 text-[15px]"
+                        onClick={confirmBooking}
+                        disabled={booking || holdBusy || belowMinNights}
+                      >
                         {booking || holdBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                        {payMode === "now"
-                          ? holdBusy
-                            ? "Holding your room…"
-                            : `Pay ${money2(grandTotal)} & Confirm`
-                          : "Confirm Booking"}
+                        {belowMinNights
+                          ? `Minimum stay of ${minNights} nights for your dates`
+                          : payMode === "now"
+                            ? holdBusy
+                              ? "Holding your room…"
+                              : `Pay ${money2(grandTotal)} & Confirm`
+                            : "Confirm Booking"}
                       </button>
                       <p className="text-[11px] text-muted-ink text-center">
-                        Free cancellation until 24 hours before check-in · No hidden fees
+                        {policy?.cancellationPolicy || "Free cancellation until 24 hours before check-in"} · No hidden fees
                       </p>
                     </div>
                   </div>
@@ -833,6 +1015,33 @@ export default function BookPage() {
                         )}
                       </div>
 
+                      {/* Add-ons selected in the previous step */}
+                      {selectedUpsellIds.length > 0 && config && (
+                        <div>
+                          <p className="field-label flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-brass" /> Add-ons</p>
+                          <div className="space-y-1.5">
+                            {config.upsells
+                              .filter((u) => selectedUpsellIds.includes(u.id))
+                              .map((u) => (
+                                <div key={u.id} className="flex items-center justify-between gap-2 rounded-md border border-brass/30 bg-brass-50/40 px-3 py-2 text-[13px]">
+                                  <span className="min-w-0 truncate text-ink">{u.name}</span>
+                                  <span className="flex items-center gap-2 shrink-0">
+                                    <span className="font-medium tabular-nums">{money2(upsellUnitPrice(u))}</span>
+                                    <button
+                                      className="text-muted-ink hover:text-danger transition"
+                                      title="Remove add-on"
+                                      aria-label={`Remove ${u.name}`}
+                                      onClick={() => toggleUpsell(u.id)}
+                                    >
+                                      <XCircle className="h-4 w-4" />
+                                    </button>
+                                  </span>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Price breakdown */}
                       <div className="border-t border-line pt-3 space-y-1.5 text-[13px]">
                         <div className="flex justify-between text-muted-ink">
@@ -843,6 +1052,12 @@ export default function BookPage() {
                           <div className="flex justify-between text-ok">
                             <span>Promo {promo?.code}</span>
                             <span className="tabular-nums">−{money2(discount)}</span>
+                          </div>
+                        )}
+                        {upsellTotal > 0 && (
+                          <div className="flex justify-between text-ink">
+                            <span>Add-ons ({selectedUpsellIds.length})</span>
+                            <span className="tabular-nums">{money2(upsellTotal)}</span>
                           </div>
                         )}
                         <div className="flex justify-between text-muted-ink">
@@ -888,6 +1103,13 @@ export default function BookPage() {
                   </div>
                 )}
 
+                {!availLoading && searched && belowMinNights && !dateInvalid && (
+                  <div className="mt-4 flex items-start gap-2 rounded-md border border-brass/40 bg-brass-50/50 px-4 py-3 text-[13px] text-brass" role="status">
+                    <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                    Minimum stay of {minNights} nights for your dates — adjust your check-out date to see live rates.
+                  </div>
+                )}
+
                 <div className="mt-5 grid gap-4 md:grid-cols-2">
                   {/* Loading skeletons */}
                   {availLoading && [...Array(4)].map((_, i) => (
@@ -905,7 +1127,8 @@ export default function BookPage() {
                     const scarce = !soldOut && rt.available <= 2;
                     return (
                       <article key={rt.id} className={`panel p-4 sm:p-5 flex flex-col ${soldOut ? "opacity-75" : ""}`}>
-                        <div className="flex items-start justify-between gap-3">
+                        <RoomGallery photos={rt.photos} name={rt.name} />
+                        <div className="flex items-start justify-between gap-3 mt-3">
                           <div className="min-w-0">
                             <h3 className="font-display text-lg font-semibold text-pine leading-snug">{rt.name}</h3>
                             <p className="text-[11px] uppercase tracking-wider text-muted-ink mt-0.5">{rt.code} · {rt.bedType}</p>
@@ -913,7 +1136,7 @@ export default function BookPage() {
                           {soldOut ? (
                             <span className="badge border-danger/35 bg-danger/10 text-danger text-[10px] shrink-0">Sold out</span>
                           ) : scarce ? (
-                            <span className="badge border-warn/40 bg-warn/10 text-warn text-[10px] shrink-0 animate-pulse">Only {rt.available} left</span>
+                            <span className="badge border-brass/50 bg-brass-50 text-brass text-[10px] shrink-0 animate-pulse font-medium">Only {rt.available} left!</span>
                           ) : (
                             <span className="badge border-ok/40 bg-ok/10 text-ok text-[10px] shrink-0">{rt.available} available</span>
                           )}
@@ -963,9 +1186,10 @@ export default function BookPage() {
                           <button
                             className="btn-brass h-10 px-6"
                             onClick={() => pickRoom(rt)}
-                            disabled={soldOut}
+                            disabled={soldOut || belowMinNights}
+                            title={belowMinNights ? `Minimum stay of ${minNights} nights for your dates` : undefined}
                           >
-                            {soldOut ? "Unavailable" : "Reserve"}
+                            {soldOut ? "Unavailable" : belowMinNights ? `Min ${minNights} nights` : "Reserve"}
                           </button>
                         </div>
                       </article>
@@ -975,7 +1199,8 @@ export default function BookPage() {
                   {/* Pre-search showcase */}
                   {!searched && !availLoading && showcase.map((rt) => (
                     <article key={rt.id} className="panel p-4 sm:p-5">
-                      <div className="flex items-start justify-between gap-3">
+                      <RoomGallery photos={rt.photos} name={rt.name} />
+                      <div className="flex items-start justify-between gap-3 mt-3">
                         <div>
                           <h3 className="font-display text-lg font-semibold text-pine">{rt.name}</h3>
                           <p className="text-[11px] uppercase tracking-wider text-muted-ink mt-0.5">{rt.code} · {rt.bedType}</p>
@@ -1079,6 +1304,66 @@ export default function BookPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Room gallery (photo grid + fallback) ────────────────────────────────────
+
+/**
+ * Room photo gallery: main photo with clickable thumbnails; when the room type
+ * has no photos yet it renders an elegant pine/brass gradient placeholder.
+ */
+function RoomGallery({ photos, name }: { photos: string[]; name: string }) {
+  const [idx, setIdx] = useState(0);
+
+  if (!photos || photos.length === 0) {
+    return (
+      <div
+        className="relative h-44 sm:h-52 rounded-lg overflow-hidden border border-line bg-gradient-to-br from-[#0F2622] via-[#17352c] to-[#B9873E]/60 grid place-items-center"
+        role="img"
+        aria-label={`${name} — photo coming soon`}
+      >
+        <div
+          className="absolute inset-0 opacity-[0.12] pointer-events-none"
+          aria-hidden
+          style={{ backgroundImage: "radial-gradient(#d9b779 1.2px, transparent 1.2px)", backgroundSize: "20px 20px" }}
+        />
+        <BedDouble className="h-10 w-10 text-brass-light relative" aria-hidden />
+      </div>
+    );
+  }
+
+  const safeIdx = Math.min(idx, photos.length - 1);
+  return (
+    <div>
+      <div className="h-44 sm:h-52 rounded-lg overflow-hidden border border-line bg-plaster">
+        <img
+          src={photos[safeIdx]}
+          alt={`${name} — photo ${safeIdx + 1} of ${photos.length}`}
+          className="h-full w-full object-cover"
+        />
+      </div>
+      {photos.length > 1 && (
+        <div className="mt-2 flex gap-2 overflow-x-auto scroll-slim pb-0.5" role="tablist" aria-label={`${name} photos`}>
+          {photos.map((p, i) => (
+            <button
+              key={`${p}-${i}`}
+              type="button"
+              role="tab"
+              aria-selected={i === safeIdx}
+              aria-label={`Show ${name} photo ${i + 1}`}
+              onClick={() => setIdx(i)}
+              className={cn(
+                "h-12 w-16 shrink-0 rounded-md overflow-hidden border-2 transition",
+                i === safeIdx ? "border-brass" : "border-transparent opacity-70 hover:opacity-100"
+              )}
+            >
+              <img src={p} alt="" className="h-full w-full object-cover" />
+            </button>
+          ))}
         </div>
       )}
     </div>

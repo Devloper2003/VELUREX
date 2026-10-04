@@ -22,6 +22,17 @@ export async function GET(req: NextRequest) {
   if (!result) return NextResponse.json({ error: "Property not configured" }, { status: 404 });
 
   const nights = result.roomTypes[0]?.nightlyRates.length ?? 0;
+
+  // Minimum-stay policy (storefront setting) — enforced before quoting so the
+  // guest sees a clean reason instead of rates they cannot book.
+  const minNights = Math.max(1, result.property.minNights || 1);
+  if (nights > 0 && nights < minNights) {
+    return NextResponse.json(
+      { error: `Minimum stay of ${minNights} nights required`, code: "MIN_NIGHTS", minNights },
+      { status: 422 }
+    );
+  }
+
   const roomTypes = result.roomTypes.map((rt) => {
     const fitsGuests = adults <= rt.maxOccupancy;
     const available = fitsGuests ? rt.available : 0;
@@ -50,6 +61,7 @@ export async function GET(req: NextRequest) {
     checkIn: searchParams.get("checkIn"),
     checkOut: searchParams.get("checkOut"),
     nights,
+    minNights,
     roomTypes,
   });
 }

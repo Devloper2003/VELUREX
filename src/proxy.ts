@@ -23,6 +23,7 @@ const PUBLIC_PATHS = [
   "/api/booking-engine/promo",
   "/api/booking-engine/payment-intent",
   "/api/booking-engine/config",
+  "/api/uploads",          // public image assets (GET); writes stay role-guarded in-handler
   "/api/whatsapp/webhook",
   "/api/channels/ical",   // outbound calendar feed — token-authenticated (OTA extranets pull it)
   "/api/channels/webhook", // inbound booking events — token-authenticated (OTAs push here)

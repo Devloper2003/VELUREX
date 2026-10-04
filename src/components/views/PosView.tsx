@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
 import { inr, fmtTime, fmtDateShort, STATUS_LABELS } from "@/lib/format";
 import { useSession } from "@/lib/store";
@@ -30,6 +30,7 @@ import {
   CheckCircle2,
   ConciergeBell,
   CreditCard,
+  ImagePlus,
   Minus,
   Plus,
   Printer,
@@ -55,6 +56,7 @@ interface MenuItemT {
   available: boolean;
   description: string;
   taxRate: number;
+  imageUrl?: string;
 }
 
 interface CartLine {
@@ -141,6 +143,106 @@ const TYPE_LABEL: Record<string, string> = { dine_in: "Dine-in", room_service: "
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
 
+/**
+ * Client-side image compression for uploads: longest edge ≤ 512px, JPEG q0.82.
+ * Returns raw base64 (no data: prefix) — small enough for POST /api/uploads.
+ */
+async function compressImageFile(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Could not read the image file"));
+    reader.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error("Unsupported image format — use JPEG, PNG or WebP"));
+    el.src = dataUrl;
+  });
+  const scale = Math.min(1, 512 / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas is not supported in this browser");
+  ctx.drawImage(img, 0, 0, w, h);
+  const out = canvas.toDataURL("image/jpeg", 0.82);
+  const base64 = out.slice(out.indexOf(",") + 1);
+  if (!base64) throw new Error("Could not compress the image");
+  return base64;
+}
+
+/** Compress → POST /api/uploads → public URL (/api/uploads/<id>). */
+async function uploadImageFile(file: File): Promise<string> {
+  const base64 = await compressImageFile(file);
+  const res = await api<{ url: string }>("/api/uploads", {
+    method: "POST",
+    body: JSON.stringify({ mime: "image/jpeg", dataBase64: base64 }),
+  });
+  return res.url;
+}
+
+/** 44px manage-row thumbnail with veg/non-veg letter fallback; click to replace. */
+function ItemThumb({
+  name,
+  isVeg,
+  imageUrl,
+  busy,
+  onPick,
+  onRemove,
+}: {
+  name: string;
+  isVeg: boolean;
+  imageUrl: string;
+  busy: boolean;
+  onPick: () => void;
+  onRemove?: () => void;
+}) {
+  return (
+    <span className="relative shrink-0">
+      <button
+        type="button"
+        onClick={onPick}
+        disabled={busy}
+        title={imageUrl ? "Replace photo" : "Add photo"}
+        aria-label={imageUrl ? `Replace photo for ${name}` : `Add photo for ${name}`}
+        className="group relative block h-11 w-11 overflow-hidden rounded-md border border-line transition hover:border-brass disabled:opacity-50"
+      >
+        {imageUrl ? (
+          <img src={imageUrl} alt={`${name} photo`} className="h-full w-full object-cover" />
+        ) : (
+          <span
+            className={cn(
+              "flex h-full w-full items-center justify-center font-display text-base font-semibold",
+              isVeg ? "bg-ok/15 text-ok" : "bg-danger/10 text-danger"
+            )}
+          >
+            {name.charAt(0).toUpperCase()}
+          </span>
+        )}
+        <span className="absolute inset-0 hidden items-center justify-center bg-pine/60 text-panel group-hover:flex">
+          <ImagePlus className="h-4 w-4" />
+        </span>
+      </button>
+      {imageUrl && onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={busy}
+          title="Remove photo"
+          aria-label={`Remove photo for ${name}`}
+          className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full border border-line bg-panel text-danger shadow-sm transition hover:bg-danger hover:text-white disabled:opacity-50"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </span>
+  );
+}
+
 // ─── Small pieces ────────────────────────────────────────────────────────────
 
 function VegDot({ isVeg }: { isVeg: boolean }) {
@@ -199,6 +301,10 @@ export default function PosView() {
   const [newVeg, setNewVeg] = useState(true);
   const [newDesc, setNewDesc] = useState("");
   const [newTax, setNewTax] = useState("5");
+  const [newImageUrl, setNewImageUrl] = useState("");
+  const [imageBusy, setImageBusy] = useState(false);
+  const [pickingFor, setPickingFor] = useState<string | null>(null); // "new" | menuItemId
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [successOrder, setSuccessOrder] = useState<OrderT | null>(null);
   const [settleTarget, setSettleTarget] = useState<OrderT | null>(null);
@@ -408,6 +514,7 @@ export default function PosView() {
           isVeg: newVeg,
           description: newDesc.trim(),
           taxRate: Number(newTax) || (newCat === "bar" ? 12 : 5),
+          imageUrl: newImageUrl || undefined,
         }),
       });
       toast({ title: `${newName.trim()} added to menu` });
@@ -416,6 +523,7 @@ export default function PosView() {
       setNewDesc("");
       setNewVeg(true);
       setNewTax(newCat === "bar" ? "12" : "5");
+      setNewImageUrl("");
       loadMenu();
     } catch (e) {
       toast({ title: "Could not add item", description: errMsg(e), variant: "destructive" });
@@ -458,6 +566,55 @@ export default function PosView() {
       loadMenu();
     } catch (e) {
       toast({ title: "Delete failed", description: errMsg(e), variant: "destructive" });
+    }
+  };
+
+  // ── Menu item images ──
+  const openPicker = (target: string) => {
+    setPickingFor(target);
+    const el = fileInputRef.current;
+    if (el) {
+      el.value = "";
+      el.click();
+    }
+  };
+
+  const handleFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const target = pickingFor;
+    const file = e.target.files?.[0];
+    setPickingFor(null);
+    if (!file || !target) return;
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Please choose an image file", variant: "destructive" });
+      return;
+    }
+    setImageBusy(true);
+    try {
+      const url = await uploadImageFile(file);
+      if (target === "new") {
+        setNewImageUrl(url);
+      } else {
+        await api(`/api/menu/${target}`, { method: "PATCH", body: JSON.stringify({ imageUrl: url }) });
+        toast({ title: "Photo updated" });
+        loadMenu();
+      }
+    } catch (err) {
+      toast({ title: "Image upload failed", description: errMsg(err), variant: "destructive" });
+    } finally {
+      setImageBusy(false);
+    }
+  };
+
+  const removeItemImage = async (m: MenuItemT) => {
+    setImageBusy(true);
+    try {
+      await api(`/api/menu/${m.id}`, { method: "PATCH", body: JSON.stringify({ imageUrl: "" }) });
+      toast({ title: "Photo removed" });
+      loadMenu();
+    } catch (e) {
+      toast({ title: "Could not remove photo", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setImageBusy(false);
     }
   };
 
@@ -522,23 +679,36 @@ export default function PosView() {
                           !m.available && "opacity-50 hover:border-line cursor-not-allowed"
                         )}
                       >
-                        <div className="flex items-start justify-between gap-1.5">
-                          <span className="flex items-center gap-1.5 min-w-0">
-                            <VegDot isVeg={m.isVeg} />
-                            <span className="text-sm font-medium text-ink truncate">{m.name}</span>
-                          </span>
-                          {!m.available && (
-                            <span className="badge border-danger/30 bg-danger/10 text-danger shrink-0">Sold out</span>
-                          )}
-                        </div>
-                        {m.description && (
-                          <p className="text-xs text-muted-ink mt-1 line-clamp-2">{m.description}</p>
-                        )}
-                        <div className="flex items-center justify-between mt-2">
-                          <span className="font-display font-semibold text-pine">{inr(m.price)}</span>
-                          {qty > 0 && (
-                            <span className="badge border-pine-700/30 bg-pine-100 text-pine-700">{qty} in cart</span>
-                          )}
+                        <div className="flex items-start gap-2.5">
+                          {m.imageUrl ? (
+                            <span className="shrink-0">
+                              <img
+                                src={m.imageUrl}
+                                alt=""
+                                className="h-14 w-14 rounded-lg object-cover border border-line"
+                              />
+                            </span>
+                          ) : null}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-1.5">
+                              <span className="flex items-center gap-1.5 min-w-0">
+                                <VegDot isVeg={m.isVeg} />
+                                <span className="text-sm font-medium text-ink truncate">{m.name}</span>
+                              </span>
+                              {!m.available && (
+                                <span className="badge border-danger/30 bg-danger/10 text-danger shrink-0">Sold out</span>
+                              )}
+                            </div>
+                            {m.description && (
+                              <p className="text-xs text-muted-ink mt-1 line-clamp-2">{m.description}</p>
+                            )}
+                            <div className="flex items-center justify-between mt-2">
+                              <span className="font-display font-semibold text-pine">{inr(m.price)}</span>
+                              {qty > 0 && (
+                                <span className="badge border-pine-700/30 bg-pine-100 text-pine-700">{qty} in cart</span>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       </button>
                     );
@@ -954,19 +1124,62 @@ export default function PosView() {
               </div>
               <input className="field h-10 col-span-2" placeholder="Description (optional)" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
             </div>
-            <button className="btn-pine w-full h-10" onClick={addMenuItem}>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => openPicker("new")}
+                disabled={imageBusy}
+                title="Add a food photo"
+                aria-label="Add a food photo"
+                className="h-16 w-16 shrink-0 rounded-md border border-dashed border-line-strong grid place-items-center text-muted-ink hover:border-brass hover:text-brass transition disabled:opacity-50 overflow-hidden"
+              >
+                {newImageUrl ? (
+                  <img src={newImageUrl} alt="New dish photo preview" className="h-full w-full object-cover" />
+                ) : (
+                  <span className="flex flex-col items-center gap-0.5">
+                    <ImagePlus className="h-4 w-4" />
+                    <span className="text-[9px] uppercase tracking-wider">Photo</span>
+                  </span>
+                )}
+              </button>
+              <div className="min-w-0 flex-1 text-xs text-muted-ink">
+                <p>Food photo (optional) — compressed to ≤512px before upload.</p>
+                {newImageUrl && (
+                  <button
+                    type="button"
+                    className="btn-ghost h-7 px-2 mt-1 text-danger hover:bg-danger/10"
+                    onClick={() => setNewImageUrl("")}
+                  >
+                    <X className="h-3.5 w-3.5" /> Remove photo
+                  </button>
+                )}
+                {imageBusy && pickingFor === "new" && <p className="text-brass mt-1">Uploading…</p>}
+              </div>
+            </div>
+            <button className="btn-pine w-full h-10" onClick={addMenuItem} disabled={imageBusy}>
               <Plus className="h-4 w-4" /> Add menu item
             </button>
           </div>
 
           <div className="border border-line rounded-md divide-y divide-line max-h-64 overflow-y-auto scroll-slim">
+            {menu.length === 0 && (
+              <p className="px-3 py-6 text-center text-sm text-muted-ink">No items yet — add the first dish above.</p>
+            )}
             {menu.map((m) => (
               <div key={m.id} className="flex items-center gap-2 px-3 py-2">
+                <ItemThumb
+                  name={m.name}
+                  isVeg={m.isVeg}
+                  imageUrl={m.imageUrl ?? ""}
+                  busy={imageBusy}
+                  onPick={() => openPicker(m.id)}
+                  onRemove={m.imageUrl ? () => removeItemImage(m) : undefined}
+                />
                 <VegDot isVeg={m.isVeg} />
                 <span className="text-sm font-medium text-ink flex-1 min-w-0 truncate">{m.name}</span>
-                <span className="text-[11px] text-muted-ink w-14">{m.category}</span>
+                <span className="hidden sm:block text-[11px] text-muted-ink w-14">{m.category}</span>
                 <input
-                  className="field h-9 w-24 text-right"
+                  className="field h-9 w-20 sm:w-24 text-right"
                   type="number"
                   min="1"
                   value={priceEdits[m.id] ?? String(m.price)}
@@ -989,6 +1202,17 @@ export default function PosView() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Hidden image picker — shared by the new-item form and existing rows */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFilePicked}
+        aria-hidden
+        tabIndex={-1}
+      />
     </div>
   );
 }

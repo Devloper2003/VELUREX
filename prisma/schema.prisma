@@ -40,6 +40,11 @@ model Property {
   notes              String    @default("") // owner-facing private notes
   deletedAt          DateTime? // soft delete — data retained ≥60 days
   isDemo             Boolean   @default(false) // flagged seed/demo tenant — hidden from the real owner's console
+  // ── Booking engine storefront policy (guest-facing) ──
+  checkInTime        String    @default("14:00") // HH:mm displayed on the public booking page
+  checkOutTime       String    @default("11:00")
+  cancellationPolicy String    @default("Free cancellation up to 24 hours before check-in. No-show charged first night.")
+  minNights          Int       @default(1) // minimum stay enforced by the booking engine
 
   staff         Staff[]
   roomTypes     RoomType[]
@@ -62,6 +67,11 @@ model Property {
   channelJobs   ChannelSyncJob[]
   channelLogs   ChannelSyncLog[]
   holds         BookingHold[]
+  attendances   StaffAttendance[]
+  payrolls      PayrollRecord[]
+  campaigns     MarketingCampaign[]
+  upsells       BookingUpsell[]
+  uploads       AssetUpload[]
 
   // ── SaaS platform relations (new, additive)
   subscription       Subscription?
@@ -93,10 +103,17 @@ model Staff {
   totpSecret        String? // AES-256-GCM encrypted seed (v1:iv:tag:cipher) — never stored plaintext
   totpEnabled       Boolean @default(false)
   totpRecoveryCodes String? // JSON array of scrypt-hashed single-use recovery codes
+  // ── Staff management (HR) ──
+  designation String    @default("") // Front Desk Executive, Chef, Housekeeper…
+  department  String    @default("") // front_office | housekeeping | fnb | maintenance | accounts | other
+  salary      Float     @default(0) // monthly base salary (INR)
+  joinDate    DateTime? // date of joining
   createdAt    DateTime @default(now())
 
-  property Property            @relation(fields: [propertyId], references: [id])
-  tasks    HousekeepingTask[]  @relation("AssignedTasks")
+  property    Property            @relation(fields: [propertyId], references: [id])
+  tasks       HousekeepingTask[]  @relation("AssignedTasks")
+  attendances StaffAttendance[]
+  payrolls    PayrollRecord[]
 }
 
 // ─── PMS ─────────────────────────────────────────────────────────────────────
@@ -112,6 +129,7 @@ model RoomType {
   sizeSqft     Int     @default(250)
   bedType      String  @default("King")
   amenities    String  @default("[]") // JSON string array
+  photos       String  @default("[]") // JSON string array of image URLs (booking engine gallery)
 
   property    Property    @relation(fields: [propertyId], references: [id])
   rooms       Room[]
@@ -202,6 +220,8 @@ model Reservation {
   totalAmount        Float
   discountAmount     Float     @default(0) // promo discount applied at booking
   promoCode          String    @default("") // code that produced discountAmount
+  upsellAmount       Float     @default(0) // booking-engine add-ons total (already inside totalAmount)
+  upsellDetail       String    @default("[]") // JSON [{name, amount, priceType}]
   paidAmount         Float     @default(0)
   idType             String    @default("")
   idNumber           String    @default("")
@@ -320,6 +340,7 @@ model MenuItem {
   description String  @default("")
   taxRate     Float   @default(5) // GST %
   sortOrder   Int     @default(0)
+  imageUrl    String  @default("") // food photo (/api/uploads/{id} or external URL)
 
   property Property      @relation(fields: [propertyId], references: [id])
   items    PosOrderItem[]
@@ -878,6 +899,8 @@ model BookingHold {
   gatewayRef     String   @default("") // Razorpay-shaped order/payment id
   reservationId  String   @default("") // set when redeemed
   tag            String   @default("") // e.g. "stress-test" for guard simulations
+  upsellAmount   Float    @default(0) // sum of selected upsell prices (taxable with rooms)
+  upsellDetail   String   @default("[]") // JSON [{name, amount, priceType}]
   expiresAt      DateTime
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -886,4 +909,114 @@ model BookingHold {
   roomType RoomType? @relation(fields: [roomTypeId], references: [id])
 
   @@index([propertyId, status, expiresAt])
+}
+
+// ─── Staff Management (HR): attendance + payroll ─────────────────────────────
+
+model StaffAttendance {
+  id            String    @id @default(cuid())
+  propertyId    String
+  staffId       String
+  date          String // business date yyyy-mm-dd
+  status        String    @default("present") // present | absent | leave | half_day | late | week_off
+  checkInAt     DateTime? // actual punch-in timestamp
+  checkOutAt    DateTime? // actual punch-out timestamp
+  hoursWorked   Float     @default(0) // computed from punches or manual override
+  overtimeHours Float     @default(0)
+  notes         String    @default("")
+  markedBy      String    @default("") // staff email of the manager who marked it
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id])
+  staff    Staff    @relation(fields: [staffId], references: [id])
+
+  @@unique([staffId, date])
+  @@index([propertyId, date])
+}
+
+model PayrollRecord {
+  id          String    @id @default(cuid())
+  propertyId  String
+  staffId     String
+  month       Int // 1-12
+  year        Int
+  baseSalary  Float     @default(0)
+  allowances  Float     @default(0)
+  deductions  Float     @default(0)
+  advance     Float     @default(0) // advance recovered this cycle
+  bonus       Float     @default(0)
+  netPay      Float     @default(0)
+  presentDays Float     @default(0)
+  halfDays    Float     @default(0)
+  leaveDays   Float     @default(0)
+  absentDays  Float     @default(0)
+  status      String    @default("draft") // draft | processed | paid
+  paidAt      DateTime?
+  paidMethod  String    @default("") // cash | bank | upi
+  notes       String    @default("")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id])
+  staff    Staff    @relation(fields: [staffId], references: [id])
+
+  @@unique([staffId, month, year])
+  @@index([propertyId, year, month])
+}
+
+// ─── Growth & Marketing (tenant) ─────────────────────────────────────────────
+
+model MarketingCampaign {
+  id          String    @id @default(cuid())
+  propertyId  String
+  name        String
+  channel     String    @default("whatsapp") // whatsapp | email | promo | social | direct
+  status      String    @default("draft") // draft | active | paused | completed
+  audience    String    @default("all_guests") // all_guests | repeat | new | vip | lapsed
+  promoCode   String    @default("") // optional linked PromoCode.code
+  budget      Float     @default(0)
+  spent       Float     @default(0)
+  reach       Int       @default(0) // people contacted
+  conversions Int       @default(0) // bookings attributed
+  revenue     Float     @default(0) // revenue attributed
+  startsAt    DateTime?
+  endsAt      DateTime?
+  notes       String    @default("")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id])
+
+  @@index([propertyId, status])
+}
+
+// ─── Booking engine storefront extras ────────────────────────────────────────
+
+model BookingUpsell {
+  id          String  @id @default(cuid())
+  propertyId  String
+  name        String // Airport pickup, Early check-in, Breakfast buffet…
+  description String  @default("")
+  price       Float   @default(0)
+  priceType   String  @default("flat") // flat | per_night | per_guest
+  active      Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  property Property @relation(fields: [propertyId], references: [id])
+
+  @@index([propertyId, active])
+}
+
+model AssetUpload {
+  id         String   @id @default(cuid())
+  propertyId String
+  mime       String // image/jpeg, image/png…
+  data       String // base64 payload (no data: prefix) — small images only
+  size       Int // bytes of the decoded payload
+  createdAt  DateTime @default(now())
+
+  property Property @relation(fields: [propertyId], references: [id])
+
+  @@index([propertyId])
 }

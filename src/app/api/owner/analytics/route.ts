@@ -6,7 +6,8 @@ import { demoScope, notDemoTenant, notDemoTenantId } from "@/lib/owner-demo";
 
 /**
  * GET /api/owner/analytics — growth & usage analytics:
- * MRR trend, churn, ARPU, LTV, trial→paid conversion, module usage, geo split.
+ * MRR trend, churn, ARPU, LTV, trial→paid conversion, module usage, geo split
+ * + `growth` (Task 35-c): signup/GMV trends, top businesses, plan mix, retention.
  */
 export async function GET(req: NextRequest) {
   const auth = await requireOwner(req);
@@ -80,6 +81,134 @@ export async function GET(req: NextRequest) {
     stateMap.set(t.state || "Unknown", (stateMap.get(t.state || "Unknown") ?? 0) + 1);
   }
 
+  // ── Platform growth (Task 35-c) — additive block, existing payload untouched ──
+  // Convention: JS map-reduce on date-filtered selects (no raw SQL → zero
+  // injection surface). Demo tenants are excluded outright for tenant-economy
+  // metrics (signups / GMV / top businesses), matching the spec.
+  const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const last12Keys: string[] = [];
+  for (let i = 11; i >= 0; i--) last12Keys.push(monthKey(new Date(now.getFullYear(), now.getMonth() - i, 1)));
+  const ninetyAgoDate = new Date(now.getTime() - 90 * 86400000);
+  const in7d = new Date(now.getTime() + 7 * 86400000);
+
+  const [subInvoices, newProps, gmvRows, top90Rows] = await Promise.all([
+    // Billed subscription revenue (pre-tax, net of discounts) for the MRR basis
+    db.invoice.findMany({
+      where: { type: "subscription", createdAt: { gte: new Date(now.getFullYear(), now.getMonth() - 11, 1) }, ...notDemoTenant(scope) },
+      select: { subtotal: true, discountAmount: true, createdAt: true, periodStart: true },
+    }),
+    // New businesses — excludes demo + soft-deleted
+    db.property.findMany({
+      where: { createdAt: { gte: new Date(now.getFullYear(), now.getMonth() - 11, 1) }, isDemo: false, deletedAt: null },
+      select: { createdAt: true },
+    }),
+    // GMV — Σ non-cancelled reservation totals, demo properties excluded
+    db.reservation.findMany({
+      where: {
+        createdAt: { gte: new Date(now.getFullYear(), now.getMonth() - 11, 1) },
+        status: { notIn: ["cancelled", "no_show"] },
+        property: { isDemo: false, deletedAt: null },
+      },
+      select: { propertyId: true, totalAmount: true, createdAt: true },
+    }),
+    // Top businesses — last-90-days booked revenue
+    db.reservation.findMany({
+      where: {
+        createdAt: { gte: ninetyAgoDate },
+        status: { notIn: ["cancelled", "no_show"] },
+        property: { isDemo: false, deletedAt: null },
+      },
+      select: { propertyId: true, totalAmount: true },
+    }),
+  ]);
+
+  // MRR trend — prefer actual billed invoices (≥2 months of history); otherwise
+  // fall back to active|trial subscription cohorts grouped by start month.
+  const invoiceMonthly = new Map<string, number>();
+  for (const inv of subInvoices) {
+    const key = monthKey(inv.periodStart ?? inv.createdAt);
+    invoiceMonthly.set(key, (invoiceMonthly.get(key) ?? 0) + Math.max(0, inv.subtotal - inv.discountAmount));
+  }
+  const invoiceMonths = last12Keys.filter((k) => (invoiceMonthly.get(k) ?? 0) > 0).length;
+
+  let mrrBasis: string;
+  let growthMrrTrend: { month: string; mrr: number }[];
+  if (invoiceMonths >= 2) {
+    mrrBasis = "invoices — Σ billed subscription invoices per month (pre-tax, net of discounts)";
+    growthMrrTrend = last12Keys.map((k) => ({ month: k, mrr: Math.round(invoiceMonthly.get(k) ?? 0) }));
+  } else {
+    mrrBasis = "subscription_cohorts — Σ plan monthlyPrice of active|trial subscriptions grouped by start month (invoice history too thin)";
+    const cohortMonthly = new Map<string, number>();
+    for (const s of subs) {
+      if (!(s.status === "active" || s.status === "trial") || s.property?.deletedAt) continue;
+      const key = monthKey(s.startedAt);
+      cohortMonthly.set(key, (cohortMonthly.get(key) ?? 0) + s.plan.monthlyPrice);
+    }
+    growthMrrTrend = last12Keys.map((k) => ({ month: k, mrr: Math.round(cohortMonthly.get(k) ?? 0) }));
+  }
+
+  // Signups — new businesses per month
+  const signupMonthly = new Map<string, number>();
+  for (const p of newProps) signupMonthly.set(monthKey(p.createdAt), (signupMonthly.get(monthKey(p.createdAt)) ?? 0) + 1);
+
+  // GMV — bookings + booked value per month
+  const gmvMonthly = new Map<string, { gmv: number; bookings: number }>();
+  for (const r of gmvRows) {
+    const key = monthKey(r.createdAt);
+    const cur = gmvMonthly.get(key) ?? { gmv: 0, bookings: 0 };
+    cur.gmv += r.totalAmount;
+    cur.bookings += 1;
+    gmvMonthly.set(key, cur);
+  }
+
+  // Top 5 businesses by last-90-days booked revenue
+  const revenueByProp = new Map<string, { revenue: number; bookings: number }>();
+  for (const r of top90Rows) {
+    const cur = revenueByProp.get(r.propertyId) ?? { revenue: 0, bookings: 0 };
+    cur.revenue += r.totalAmount;
+    cur.bookings += 1;
+    revenueByProp.set(r.propertyId, cur);
+  }
+  const top5 = [...revenueByProp.entries()].sort((a, b) => b[1].revenue - a[1].revenue).slice(0, 5);
+  const topProps = top5.length > 0
+    ? await db.property.findMany({ where: { id: { in: top5.map(([id]) => id) } }, select: { id: true, name: true, currentPlanId: true } })
+    : [];
+  const planByPropertyId = new Map(subs.map((s) => [s.propertyId, s.plan]));
+
+  const growth = {
+    mrrBasis,
+    mrrTrend: growthMrrTrend,
+    signupsTrend: last12Keys.map((k) => ({ month: k, count: signupMonthly.get(k) ?? 0 })),
+    gmvTrend: last12Keys.map((k) => {
+      const agg = gmvMonthly.get(k);
+      return { month: k, gmv: Math.round(agg?.gmv ?? 0), bookings: agg?.bookings ?? 0 };
+    }),
+    topBusinesses: top5.map(([propertyId, agg]) => {
+      const prop = topProps.find((p) => p.id === propertyId);
+      return {
+        propertyId,
+        name: prop?.name ?? "Unknown business",
+        revenue: Math.round(agg.revenue),
+        bookings: agg.bookings,
+        plan: planByPropertyId.get(propertyId)?.code ?? plans.find((p) => p.id === prop?.currentPlanId)?.code ?? "—",
+      };
+    }),
+    planMix: plans
+      .map((p) => ({ planCode: p.code, count: subs.filter((s) => s.planId === p.id).length }))
+      .filter((x) => x.count > 0),
+    retention: (() => {
+      const liveSubs = subs.filter((s) => !s.property?.deletedAt);
+      return {
+        active: liveSubs.filter((s) => s.status === "active").length,
+        trial: liveSubs.filter((s) => s.status === "trial").length,
+        overdue: liveSubs.filter((s) => s.status === "overdue").length,
+        suspended: liveSubs.filter((s) => s.status === "suspended").length,
+        cancelled: liveSubs.filter((s) => s.status === "cancelled").length,
+        trialsExpiring7d: liveSubs.filter((s) => s.status === "trial" && s.trialEndsAt && s.trialEndsAt > now && s.trialEndsAt <= in7d).length,
+      };
+    })(),
+  };
+
   return NextResponse.json({
     kpis: {
       mrr: Math.round(mrrNow),
@@ -100,6 +229,7 @@ export async function GET(req: NextRequest) {
     moduleUsage,
     citySplit: [...cityMap.entries()].map(([city, count]) => ({ city, count })).sort((a, b) => b.count - a.count),
     stateSplit: [...stateMap.entries()].map(([state, count]) => ({ state, count })).sort((a, b) => b.count - a.count),
+    growth,
   });
 }
 

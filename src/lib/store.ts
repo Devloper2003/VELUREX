@@ -80,6 +80,8 @@ export type ViewKey =
   | "maintenance"
   | "night-audit"
   | "reports"
+  | "staff"
+  | "growth"
   | "booking-engine"
   | "channel-inventory"
   | "channels"
@@ -93,7 +95,7 @@ export const ROLE_VIEWS: Record<Role, ViewKey[]> = {
   hotel_admin: [
     "dashboard", "reservations", "calendar", "guests", "rooms", "rate-plans",
     "pos", "kitchen", "billing", "housekeeping", "maintenance", "night-audit",
-    "reports", "booking-engine", "channel-inventory", "channels", "whatsapp", "pricing", "settings",
+    "reports", "staff", "growth", "booking-engine", "channel-inventory", "channels", "whatsapp", "pricing", "settings",
     "subscription",
   ],
   front_desk: [

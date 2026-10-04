@@ -29,6 +29,8 @@ import PosView from "@/components/views/PosView";
 import KitchenView from "@/components/views/KitchenView";
 import NightAuditView from "@/components/views/NightAuditView";
 import ReportsView from "@/components/views/ReportsView";
+import StaffView from "@/components/views/StaffView";
+import GrowthView from "@/components/views/GrowthView";
 import BookingEngineView from "@/components/views/BookingEngineView";
 import InventoryControlView from "@/components/views/InventoryControlView";
 import ChannelsView from "@/components/views/ChannelsView";
@@ -54,6 +56,8 @@ const VIEW_COMPONENTS: Record<ViewKey, React.ComponentType> = {
   kitchen: KitchenView,
   "night-audit": NightAuditView,
   reports: ReportsView,
+  staff: StaffView,
+  growth: GrowthView,
   "booking-engine": BookingEngineView,
   "channel-inventory": InventoryControlView,
   channels: ChannelsView,

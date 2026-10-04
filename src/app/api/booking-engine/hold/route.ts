@@ -6,7 +6,7 @@ import {
   createBookingHold,
   sweepExpiredHolds,
 } from "@/lib/booking-guard";
-import { parseDay, getPrimaryProperty } from "../_shared";
+import { parseDay, getPrimaryProperty, nightDates, resolveUpsells, applyUpsellsToHold, parseUpsellDetail } from "../_shared";
 
 /**
  * POST /api/booking-engine/hold — phase A of the race-safe booking flow.
@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
     guestName?: string;
     guestPhone?: string;
     promoCode?: string;
+    upsellIds?: string[];
     idempotencyKey?: string;
     tag?: string;
   } | null;
@@ -43,13 +44,25 @@ export async function POST(req: NextRequest) {
   const rt = await db.roomType.findFirst({ where: { id: body.roomTypeId, propertyId: property.id } });
   if (!rt) return NextResponse.json({ error: "Room type not found" }, { status: 404 });
 
+  // Minimum-stay policy — reject before reserving any inventory.
+  const nights = nightDates(checkIn, checkOut).length;
+  const minNights = Math.max(1, property.minNights || 1);
+  if (nights < minNights) {
+    return NextResponse.json(
+      { error: `Minimum stay of ${minNights} nights required`, code: "MIN_NIGHTS" },
+      { status: 422 }
+    );
+  }
+
+  const adults = Math.max(1, Number(body.adults) || 1);
+
   try {
     const { hold, duplicate } = await createBookingHold({
       propertyId: property.id,
       roomTypeId: body.roomTypeId,
       checkIn,
       checkOut,
-      adults: Math.max(1, Number(body.adults) || 1),
+      adults,
       children: Math.max(0, Number(body.children) || 0),
       guestName: String(body.guestName ?? "").trim(),
       guestPhone: String(body.guestPhone ?? "").trim(),
@@ -58,20 +71,34 @@ export async function POST(req: NextRequest) {
       tag: body.tag,
     });
 
+    // Add-ons: validate ids against the property and fold the total into the
+    // hold's locked price (rooms + upsells are taxed as one base). Holds
+    // without add-ons are left untouched — bit-identical to the legacy flow.
+    const upsells = await resolveUpsells(property.id, body.upsellIds, nights, adults);
+    // The created hold carries upsell columns (defaults 0/"[]") even though the
+    // guard's narrow result type omits them — widen so the priced row flows through.
+    let priced = hold as typeof hold & { upsellAmount: number; upsellDetail: string };
+    if (upsells.ids.length > 0) {
+      const updated = await applyUpsellsToHold(hold.id, upsells.amount, upsells.detail);
+      if (updated) priced = updated;
+    }
+
     return NextResponse.json(
       {
-        holdId: hold.id,
-        status: hold.status,
+        holdId: priced.id,
+        status: priced.status,
         duplicate,
-        expiresAt: hold.expiresAt,
-        ttlSeconds: Math.max(0, Math.round((new Date(hold.expiresAt).getTime() - Date.now()) / 1000)),
-        nights: hold.nights,
+        expiresAt: priced.expiresAt,
+        ttlSeconds: Math.max(0, Math.round((new Date(priced.expiresAt).getTime() - Date.now()) / 1000)),
+        nights: priced.nights,
         roomTypeName: rt.name,
-        totalAmount: hold.totalAmount,
-        discountAmount: hold.discountAmount,
-        promoApplied: hold.promoCode || null,
-        taxAmount: hold.taxAmount,
-        grandTotal: hold.grandTotal,
+        totalAmount: priced.totalAmount,
+        discountAmount: priced.discountAmount,
+        promoApplied: priced.promoCode || null,
+        upsellAmount: priced.upsellAmount,
+        upsellDetail: parseUpsellDetail(priced.upsellDetail),
+        taxAmount: priced.taxAmount,
+        grandTotal: priced.grandTotal,
       },
       { status: duplicate ? 200 : 201 }
     );
@@ -119,6 +146,8 @@ export async function GET(req: NextRequest) {
     taxAmount: hold.taxAmount,
     discountAmount: hold.discountAmount,
     promoApplied: hold.promoCode || null,
+    upsellAmount: hold.upsellAmount,
+    upsellDetail: parseUpsellDetail(hold.upsellDetail),
     reservationId: hold.reservationId || null,
   });
 }

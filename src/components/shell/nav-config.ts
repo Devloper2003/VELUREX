@@ -2,7 +2,7 @@ import {
   LayoutDashboard, CalendarRange, Users, DoorOpen, Tag, BedDouble,
   ConciergeBell, ChefHat, ReceiptIndianRupee, BrushCleaning, Wrench,
   MoonStar, BarChart3, Globe, MessageCircle, TrendingUp, Settings2,
-  Network, Grid3X3, Link2, CreditCard,
+  Network, Grid3X3, Link2, CreditCard, UserRoundCheck, Rocket,
 } from "lucide-react";
 import type { ViewKey } from "@/lib/store";
 
@@ -49,6 +49,8 @@ export const NAV: NavEntry[] = [
   { key: "maintenance", label: "Maintenance", icon: Wrench },
   { key: "night-audit", label: "Night Audit", icon: MoonStar },
   { key: "reports", label: "Reports", icon: BarChart3 },
+  { key: "staff", label: "Staff & Payroll", icon: UserRoundCheck },
+  { key: "growth", label: "Growth & Revenue", icon: Rocket },
   { key: "booking-engine", label: "Booking Engine", icon: Globe },
   {
     label: "Distribution",
@@ -78,6 +80,8 @@ export const VIEW_TITLES: Record<ViewKey, string> = {
   maintenance: "Maintenance",
   "night-audit": "Night Audit",
   reports: "Reports & Analytics",
+  staff: "Staff & Payroll Management",
+  growth: "Growth & Revenue Studio",
   "booking-engine": "Booking Engine",
   "channel-inventory": "Inventory Control — Unified Availability",
   channels: "Channels & OTAs",
@@ -101,5 +105,7 @@ export const GO_KEYS: Partial<Record<string, ViewKey>> = {
   p: "pos",
   i: "channel-inventory",
   o: "channels",
+  t: "staff",
+  w: "growth",
   s: "settings",
 };

@@ -9,6 +9,20 @@ function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
+/**
+ * Validates an image URL for menu items / room photos: ≤ 500 chars and either
+ * an internal upload reference (/api/uploads/<id>) or an https:// asset.
+ * Returns the cleaned value, or null when invalid. Empty string = clear.
+ */
+export function validateImageUrl(v: unknown): { ok: true; value: string } | { ok: false } {
+  if (typeof v !== "string") return { ok: false };
+  const s = v.trim();
+  if (s === "") return { ok: true, value: "" };
+  if (s.length > 500) return { ok: false };
+  if (s.startsWith("/api/uploads/") || s.startsWith("https://")) return { ok: true, value: s };
+  return { ok: false };
+}
+
 /** GET /api/menu?category= — menu items ordered by sortOrder. */
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -49,6 +63,18 @@ export async function POST(req: NextRequest) {
     select: { sortOrder: true },
   });
 
+  let imageUrl = "";
+  if (body?.imageUrl !== undefined && body.imageUrl !== "") {
+    const img = validateImageUrl(body.imageUrl);
+    if (!img.ok) {
+      return NextResponse.json(
+        { error: "imageUrl must start with /api/uploads/ or https:// and be at most 500 characters" },
+        { status: 400 }
+      );
+    }
+    imageUrl = img.value;
+  }
+
   const item = await db.menuItem.create({
     data: {
       propertyId,
@@ -58,6 +84,7 @@ export async function POST(req: NextRequest) {
       isVeg: body?.isVeg !== false,
       available: body?.available !== false,
       description: str(body?.description),
+      imageUrl,
       taxRate:
         Number.isFinite(Number(body?.taxRate)) && Number(body?.taxRate) >= 0
           ? Number(body?.taxRate)

@@ -6,6 +6,7 @@ import {
   declineHoldPayment,
   releaseHold,
 } from "@/lib/booking-guard";
+import { copyUpsellsToReservation } from "../_shared";
 
 /**
  * POST /api/booking-engine/pay — phase B of the race-safe booking flow.
@@ -43,6 +44,12 @@ export async function POST(req: NextRequest) {
         paymentMethod: body.paymentMethod,
         payNow: true,
       });
+      // The redeemed hold may carry add-ons (upsellAmount/upsellDetail were
+      // folded into its locked price at hold time) — mirror them onto the
+      // freshly created reservation so the PMS record shows the breakdown.
+      if (result.reservation) {
+        await copyUpsellsToReservation(body.holdId, result.reservation.id).catch(() => {});
+      }
       return NextResponse.json(result, { status: result.duplicate ? 200 : 201 });
     }
 

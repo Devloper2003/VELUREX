@@ -9,6 +9,16 @@ function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
+/** Image URL rule: ≤ 500 chars, /api/uploads/… or https://… (empty = clear). */
+function validImageUrl(v: unknown): { ok: true; value: string } | { ok: false } {
+  if (typeof v !== "string") return { ok: false };
+  const s = v.trim();
+  if (s === "") return { ok: true, value: "" };
+  if (s.length > 500) return { ok: false };
+  if (s.startsWith("/api/uploads/") || s.startsWith("https://")) return { ok: true, value: s };
+  return { ok: false };
+}
+
 /** PATCH /api/menu/[id] — edit price/name/availability etc. Roles: hotel_admin, restaurant_staff. */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth(req, ["hotel_admin", "restaurant_staff"]);
@@ -31,6 +41,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     category?: string;
     description?: string;
     taxRate?: number;
+    imageUrl?: string;
   } = {};
 
   const name = str(body.name);
@@ -62,6 +73,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: "taxRate must be between 0 and 100" }, { status: 400 });
     }
     data.taxRate = taxRate;
+  }
+
+  if (body.imageUrl !== undefined) {
+    const img = validImageUrl(body.imageUrl);
+    if (!img.ok) {
+      return NextResponse.json(
+        { error: "imageUrl must start with /api/uploads/ or https:// and be at most 500 characters" },
+        { status: 400 }
+      );
+    }
+    data.imageUrl = img.value;
   }
 
   if (Object.keys(data).length === 0) {

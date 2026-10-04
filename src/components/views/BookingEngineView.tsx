@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, qs } from "@/lib/api-client";
 import { inr, fmtDateShort, fmtDate, toISODate, STATUS_LABELS } from "@/lib/format";
 import { useSession } from "@/lib/store";
@@ -10,11 +10,13 @@ import {
   CalendarCheck2, CheckCircle2, ChevronLeft, Copy, Globe, Loader2, MessageCircle, Percent,
   Tag, Users, ExternalLink, ShieldCheck, Plus, Trash2, Settings2,
   Play, Eraser, Timer, AlertTriangle, RefreshCw, Zap, History,
+  Sparkles, Image as ImageIcon, Clock, Pencil, Info,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 interface AvailabilityRoomType {
@@ -87,6 +89,21 @@ interface PromoCodeRow {
   maxUses: number;
   usedCount: number;
   active: boolean;
+}
+interface UpsellRow {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  priceType: string;
+  active: boolean;
+  sortOrder: number;
+}
+interface StorefrontData {
+  isPrimary: boolean;
+  policy: { checkInTime: string; checkOutTime: string; cancellationPolicy: string; minNights: number };
+  roomTypes: { id: string; name: string; code: string; baseRate: number; photos: string[]; amenities: string[] }[];
+  upsells: UpsellRow[];
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -333,7 +350,18 @@ export default function BookingEngineView() {
   };
 
   return (
-    <div className="grid lg:grid-cols-3 gap-4 items-start">
+    <Tabs defaultValue="engine" className="space-y-4">
+      <TabsList className="flex-wrap h-auto">
+        <TabsTrigger value="engine" className="min-h-9 px-3 gap-1.5">
+          <CalendarCheck2 className="h-4 w-4" /> Booking Engine
+        </TabsTrigger>
+        <TabsTrigger value="storefront" className="min-h-9 px-3 gap-1.5">
+          <Sparkles className="h-4 w-4" /> Storefront
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="engine">
+        <div className="grid lg:grid-cols-3 gap-4 items-start">
       {/* ── Left: working demo of the public widget ─────────────────────────── */}
       <div className="panel lg:col-span-2">
         <div className="panel-header">
@@ -862,7 +890,13 @@ export default function BookingEngineView() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+        </div>
+      </TabsContent>
+
+      <TabsContent value="storefront">
+        <StorefrontTab />
+      </TabsContent>
+    </Tabs>
   );
 }
 
@@ -1175,6 +1209,508 @@ function OversaleGuardPanel({ isAdmin }: { isAdmin: boolean }) {
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ─── Storefront tab — policies, room photo galleries, add-ons ─────────────── */
+
+const UPSELL_TYPE_LABEL: Record<string, string> = {
+  flat: "one-time",
+  per_night: "per night",
+  per_guest: "per guest",
+};
+
+/**
+ * In-file copy of the POS image compressor (max 512px longest edge, JPEG
+ * q0.82 → base64). Deliberately duplicated — views must not cross-import.
+ */
+async function compressForUpload(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Could not read the image file"));
+    reader.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error("Unsupported image format — use JPEG, PNG or WebP"));
+    el.src = dataUrl;
+  });
+  const scale = Math.min(1, 512 / Math.max(img.width, img.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.width * scale));
+  canvas.height = Math.max(1, Math.round(img.height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas is not supported in this browser");
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const out = canvas.toDataURL("image/jpeg", 0.82);
+  const base64 = out.slice(out.indexOf(",") + 1);
+  if (!base64) throw new Error("Could not compress the image");
+  return base64;
+}
+
+function StorefrontTab() {
+  const { toast } = useToast();
+  const [data, setData] = useState<StorefrontData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [savingPolicy, setSavingPolicy] = useState(false);
+  const [policyForm, setPolicyForm] = useState({
+    checkInTime: "14:00",
+    checkOutTime: "11:00",
+    cancellationPolicy: "",
+    minNights: "1",
+  });
+
+  // Room photos
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoTarget, setPhotoTarget] = useState<string | null>(null); // roomTypeId whose picker is open
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Add-ons (upsells)
+  const [upsellOpen, setUpsellOpen] = useState(false);
+  const [upsellEditing, setUpsellEditing] = useState<UpsellRow | null>(null);
+  const [upsellForm, setUpsellForm] = useState({ name: "", description: "", price: "", priceType: "flat", sortOrder: "0" });
+  const [upsellSaving, setUpsellSaving] = useState(false);
+  const [upsellDeleting, setUpsellDeleting] = useState<UpsellRow | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api<StorefrontData>("/api/booking-engine/storefront");
+      setData(d);
+      setPolicyForm({
+        checkInTime: d.policy.checkInTime,
+        checkOutTime: d.policy.checkOutTime,
+        cancellationPolicy: d.policy.cancellationPolicy,
+        minNights: String(d.policy.minNights),
+      });
+    } catch {
+      /* keep stale */
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // ── Policies ──
+  const savePolicy = async () => {
+    setSavingPolicy(true);
+    try {
+      await api("/api/booking-engine/storefront", {
+        method: "PATCH",
+        body: JSON.stringify({
+          policy: {
+            checkInTime: policyForm.checkInTime,
+            checkOutTime: policyForm.checkOutTime,
+            cancellationPolicy: policyForm.cancellationPolicy,
+            minNights: Math.min(30, Math.max(1, Number(policyForm.minNights) || 1)),
+          },
+        }),
+      });
+      toast({ title: "Policies saved", description: "The public booking page now shows the new settings." });
+      await load();
+    } catch (e) {
+      toast({ title: "Could not save policies", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    } finally {
+      setSavingPolicy(false);
+    }
+  };
+
+  // ── Room photos ──
+  const patchPhotos = async (roomTypeId: string, photos: string[]) => {
+    await api("/api/booking-engine/storefront", {
+      method: "PATCH",
+      body: JSON.stringify({ photos: [{ roomTypeId, photos }] }),
+    });
+    await load();
+  };
+
+  const openPhotoPicker = (roomTypeId: string) => {
+    setPhotoTarget(roomTypeId);
+    const el = photoInputRef.current;
+    if (el) {
+      el.value = "";
+      el.click();
+    }
+  };
+
+  const handlePhotoPicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const roomTypeId = photoTarget;
+    const file = e.target.files?.[0];
+    setPhotoTarget(null);
+    if (!file || !roomTypeId) return;
+    const rt = data?.roomTypes.find((r) => r.id === roomTypeId);
+    if (!rt) return;
+    if (rt.photos.length >= 6) {
+      toast({ title: "Maximum 6 photos per room type", variant: "destructive" });
+      return;
+    }
+    setPhotoBusy(true);
+    try {
+      const base64 = await compressForUpload(file);
+      const up = await api<{ url: string }>("/api/uploads", {
+        method: "POST",
+        body: JSON.stringify({ mime: "image/jpeg", dataBase64: base64 }),
+      });
+      await patchPhotos(roomTypeId, [...rt.photos, up.url]);
+      toast({ title: "Photo added" });
+    } catch (err) {
+      toast({ title: "Photo upload failed", description: err instanceof Error ? err.message : undefined, variant: "destructive" });
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const removePhoto = async (roomTypeId: string, index: number) => {
+    const rt = data?.roomTypes.find((r) => r.id === roomTypeId);
+    if (!rt) return;
+    setPhotoBusy(true);
+    try {
+      await patchPhotos(roomTypeId, rt.photos.filter((_, i) => i !== index));
+      toast({ title: "Photo removed" });
+    } catch (e) {
+      toast({ title: "Could not remove photo", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  // ── Add-ons (upsells) ──
+  const openUpsellDialog = (row?: UpsellRow) => {
+    setUpsellEditing(row ?? null);
+    setUpsellForm(
+      row
+        ? { name: row.name, description: row.description, price: String(row.price), priceType: row.priceType, sortOrder: String(row.sortOrder) }
+        : { name: "", description: "", price: "", priceType: "flat", sortOrder: "0" }
+    );
+    setUpsellOpen(true);
+  };
+
+  const saveUpsell = async () => {
+    if (!upsellForm.name.trim() || !upsellForm.price || Number(upsellForm.price) <= 0) {
+      toast({ title: "Name and a positive price are required", variant: "destructive" });
+      return;
+    }
+    setUpsellSaving(true);
+    try {
+      const payload = JSON.stringify({
+        name: upsellForm.name.trim(),
+        description: upsellForm.description.trim(),
+        price: Number(upsellForm.price),
+        priceType: upsellForm.priceType,
+        sortOrder: Number(upsellForm.sortOrder) || 0,
+      });
+      if (upsellEditing) {
+        await api(`/api/booking-engine/upsells/${upsellEditing.id}`, { method: "PATCH", body: payload });
+      } else {
+        await api("/api/booking-engine/upsells", { method: "POST", body: payload });
+      }
+      toast({ title: upsellEditing ? "Add-on updated" : "Add-on created" });
+      setUpsellOpen(false);
+      setUpsellEditing(null);
+      await load();
+    } catch (e) {
+      toast({ title: "Could not save add-on", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    } finally {
+      setUpsellSaving(false);
+    }
+  };
+
+  const toggleUpsell = async (row: UpsellRow, active: boolean) => {
+    try {
+      await api(`/api/booking-engine/upsells/${row.id}`, { method: "PATCH", body: JSON.stringify({ active }) });
+      setData((d) => (d ? { ...d, upsells: d.upsells.map((u) => (u.id === row.id ? { ...u, active } : u)) } : d));
+      toast({ title: `${row.name} ${active ? "activated" : "hidden"}` });
+    } catch (e) {
+      toast({ title: "Update failed", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    }
+  };
+
+  const deleteUpsell = async (row: UpsellRow) => {
+    try {
+      await api(`/api/booking-engine/upsells/${row.id}`, { method: "DELETE" });
+      setData((d) => (d ? { ...d, upsells: d.upsells.filter((u) => u.id !== row.id) } : d));
+      toast({ title: `${row.name} deleted` });
+    } catch (e) {
+      toast({ title: "Delete failed", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    } finally {
+      setUpsellDeleting(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="panel p-6 space-y-3" aria-busy>
+        <div className="skeleton h-5 w-40 rounded" />
+        <div className="skeleton h-3 w-2/3 rounded" />
+        <div className="skeleton h-24 w-full rounded" />
+        <p className="text-xs text-muted-ink flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading storefront settings…</p>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="panel p-8 text-center space-y-3">
+        <Sparkles className="h-8 w-8 mx-auto text-brass" />
+        <p className="text-sm text-muted-ink">Storefront settings could not be loaded.</p>
+        <button className="btn-outline h-9" onClick={load}>
+          <RefreshCw className="h-4 w-4" /> Retry
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header + public link */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-ink">
+          Everything here is shown to guests on the public booking page.
+        </p>
+        {data.isPrimary ? (
+          <a href="/book" target="_blank" rel="noopener noreferrer" className="btn-outline h-9 justify-center" title="Open the guest-facing booking page in a new tab">
+            <Globe className="h-4 w-4 text-brass" /> Open public storefront
+          </a>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-line bg-plaster px-2.5 h-8 text-[11px] text-muted-ink" title="The hosted /book page currently showcases the platform's flagship property — your policies and add-ons are saved for your property and will go live when per-property storefronts roll out.">
+            <Info className="h-3.5 w-3.5 text-brass" /> Saved for your property — hosted page shows the flagship property
+          </span>
+        )}
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3 items-start">
+        {/* ── Policies ── */}
+        <div className="panel">
+          <div className="panel-header">
+            <p className="panel-title flex items-center gap-2"><Clock className="h-4 w-4 text-brass" /> Stay policies</p>
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <label className="field-label" htmlFor="sf-in">Check-in from</label>
+                <input id="sf-in" type="time" className="field" value={policyForm.checkInTime}
+                  onChange={(e) => setPolicyForm((f) => ({ ...f, checkInTime: e.target.value }))} />
+              </div>
+              <div>
+                <label className="field-label" htmlFor="sf-out">Check-out until</label>
+                <input id="sf-out" type="time" className="field" value={policyForm.checkOutTime}
+                  onChange={(e) => setPolicyForm((f) => ({ ...f, checkOutTime: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <label className="field-label" htmlFor="sf-min">Minimum nights (1–30)</label>
+              <input id="sf-min" type="number" min={1} max={30} className="field" value={policyForm.minNights}
+                onChange={(e) => setPolicyForm((f) => ({ ...f, minNights: e.target.value }))} />
+            </div>
+            <div>
+              <label className="field-label" htmlFor="sf-cancel">Cancellation policy (≤ 500 chars)</label>
+              <textarea
+                id="sf-cancel"
+                className="field min-h-[80px] resize-y"
+                maxLength={500}
+                placeholder="Free cancellation up to 24 hours before check-in…"
+                value={policyForm.cancellationPolicy}
+                onChange={(e) => setPolicyForm((f) => ({ ...f, cancellationPolicy: e.target.value }))}
+              />
+              <p className="text-[10.5px] text-muted-ink mt-1">{policyForm.cancellationPolicy.length}/500</p>
+            </div>
+            <button className="btn-pine w-full h-9 justify-center" onClick={savePolicy} disabled={savingPolicy}>
+              {savingPolicy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+              Save policies
+            </button>
+          </div>
+        </div>
+
+        {/* ── Room photos ── */}
+        <div className="panel">
+          <div className="panel-header">
+            <p className="panel-title flex items-center gap-2"><ImageIcon className="h-4 w-4 text-brass" /> Room photos</p>
+            <span className="text-xs text-muted-ink">{data.roomTypes.length} types · max 6 each</span>
+          </div>
+          <div className="p-4 space-y-4 max-h-[520px] overflow-y-auto scroll-slim">
+            {data.roomTypes.length === 0 && (
+              <p className="text-sm text-muted-ink text-center py-6">No room types yet.</p>
+            )}
+            {data.roomTypes.map((rt) => (
+              <div key={rt.id} className="rounded-md border border-line p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-pine truncate">{rt.name}</p>
+                    <p className="text-[11px] text-muted-ink">{rt.code} · {inr(rt.baseRate)}/night</p>
+                  </div>
+                  <button
+                    className="btn-outline h-8 px-2.5 text-xs shrink-0"
+                    disabled={photoBusy || rt.photos.length >= 6}
+                    onClick={() => openPhotoPicker(rt.id)}
+                  >
+                    {photoBusy && photoTarget === rt.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                    Add
+                  </button>
+                </div>
+                {rt.photos.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {rt.photos.map((p, i) => (
+                      <span key={`${p}-${i}`} className="relative h-16 w-16 overflow-hidden rounded-md border border-line">
+                        <img src={p} alt={`${rt.name} photo ${i + 1}`} className="h-full w-full object-cover" />
+                        <button
+                          className="absolute right-0.5 top-0.5 grid h-5 w-5 place-items-center rounded-full bg-pine/80 text-panel transition hover:bg-danger"
+                          title="Remove photo"
+                          aria-label={`Remove ${rt.name} photo ${i + 1}`}
+                          disabled={photoBusy}
+                          onClick={() => removePhoto(rt.id, i)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11.5px] text-muted-ink">
+                    No photos yet — guests see an elegant placeholder until you add some.
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Add-ons (upsells) ── */}
+        <div className="panel">
+          <div className="panel-header">
+            <p className="panel-title flex items-center gap-2"><Sparkles className="h-4 w-4 text-brass" /> Add-ons</p>
+            <button className="btn-outline h-8 text-xs" onClick={() => openUpsellDialog()}>
+              <Plus className="h-3.5 w-3.5" /> Add add-on
+            </button>
+          </div>
+          <div className="p-4 space-y-2 max-h-[520px] overflow-y-auto scroll-slim">
+            {data.upsells.length === 0 && (
+              <div className="py-6 text-center space-y-2">
+                <p className="text-sm text-muted-ink">No add-ons yet.</p>
+                <p className="text-[11.5px] text-muted-ink">
+                  Airport pickups, early check-in, breakfast — guests pick these during booking.
+                </p>
+              </div>
+            )}
+            {data.upsells.map((u) => (
+              <div key={u.id} className="rounded-md border border-line px-3 py-2.5 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-medium text-pine truncate">{u.name}</p>
+                    <span className={cn(
+                      "badge text-[9.5px]",
+                      u.active ? "border-ok/40 bg-ok/10 text-ok" : "border-line-strong bg-plaster text-muted-ink"
+                    )}>
+                      {u.active ? "Active" : "Hidden"}
+                    </span>
+                  </div>
+                  {u.description && <p className="text-[11.5px] text-muted-ink mt-0.5 line-clamp-2">{u.description}</p>}
+                  <p className="text-[12px] font-medium text-brass mt-1">
+                    {inr(u.price)} <span className="text-muted-ink font-normal">· {UPSELL_TYPE_LABEL[u.priceType] ?? u.priceType}</span>
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Switch checked={u.active} onCheckedChange={(v) => toggleUpsell(u, v)} aria-label={`Toggle ${u.name}`} />
+                  <button className="btn-ghost h-8 w-8 px-0 text-pine" title="Edit add-on" aria-label={`Edit ${u.name}`} onClick={() => openUpsellDialog(u)}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    className="h-8 w-8 rounded-md flex items-center justify-center text-danger hover:bg-danger/10 transition"
+                    title="Delete add-on"
+                    aria-label={`Delete ${u.name}`}
+                    onClick={() => setUpsellDeleting(u)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Hidden photo picker (room galleries) */}
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handlePhotoPicked}
+        aria-hidden
+        tabIndex={-1}
+      />
+
+      {/* Add / edit add-on dialog */}
+      <Dialog open={upsellOpen} onOpenChange={(v) => { setUpsellOpen(v); if (!v) setUpsellEditing(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display text-pine">{upsellEditing ? "Edit add-on" : "New add-on"}</DialogTitle>
+            <DialogDescription>
+              Offered to guests between room selection and guest details on /book.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2.5">
+            <div>
+              <label className="field-label" htmlFor="up-name">Name *</label>
+              <input id="up-name" className="field" maxLength={80} placeholder="Airport pickup"
+                value={upsellForm.name} onChange={(e) => setUpsellForm((f) => ({ ...f, name: e.target.value }))} />
+            </div>
+            <div>
+              <label className="field-label" htmlFor="up-desc">Description</label>
+              <textarea id="up-desc" className="field min-h-[64px] resize-y" maxLength={300}
+                placeholder="Sedan transfer, up to 3 guests, meet & greet"
+                value={upsellForm.description} onChange={(e) => setUpsellForm((f) => ({ ...f, description: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <label className="field-label" htmlFor="up-price">Price ₹ *</label>
+                <input id="up-price" type="number" min="1" className="field" placeholder="1200"
+                  value={upsellForm.price} onChange={(e) => setUpsellForm((f) => ({ ...f, price: e.target.value }))} />
+              </div>
+              <div>
+                <label className="field-label" htmlFor="up-type">Charged as</label>
+                <select id="up-type" className="field" value={upsellForm.priceType}
+                  onChange={(e) => setUpsellForm((f) => ({ ...f, priceType: e.target.value }))}>
+                  <option value="flat">One-time (flat)</option>
+                  <option value="per_night">Per night</option>
+                  <option value="per_guest">Per guest</option>
+                </select>
+              </div>
+              <div>
+                <label className="field-label" htmlFor="up-order">Display order</label>
+                <input id="up-order" type="number" className="field" value={upsellForm.sortOrder}
+                  onChange={(e) => setUpsellForm((f) => ({ ...f, sortOrder: e.target.value }))} />
+              </div>
+            </div>
+            <button className="btn-pine w-full h-9 justify-center" onClick={saveUpsell} disabled={upsellSaving}>
+              {upsellSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : upsellEditing ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+              {upsellEditing ? "Save changes" : "Create add-on"}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete add-on confirm */}
+      <AlertDialog open={!!upsellDeleting} onOpenChange={(v) => !v && setUpsellDeleting(null)}>
+        <AlertDialogContent className="bg-panel border-line">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-display text-pine">Delete add-on {upsellDeleting?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Guests will no longer be able to select it. Past bookings keep their recorded amounts. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-line bg-panel hover:bg-plaster">Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-danger text-white hover:bg-danger/90" onClick={() => upsellDeleting && deleteUpsell(upsellDeleting)}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
