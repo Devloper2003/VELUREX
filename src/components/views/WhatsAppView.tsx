@@ -3,15 +3,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, qs } from "@/lib/api-client";
 import { fmtDateTime, STATUS_LABELS } from "@/lib/format";
+import { useSession } from "@/lib/store";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  BellRing, ChevronDown, ChevronUp, Clock, Loader2, MessageCircle, PlugZap, RefreshCw, Send, Sparkles, TicketCheck,
+  BellRing, ChevronDown, ChevronUp, Clock, Loader2, MessageCircle, PlugZap, RefreshCw, Search, Send, Settings2, Sparkles, TicketCheck,
 } from "lucide-react";
 
 interface WhatsAppMessage {
@@ -36,6 +38,14 @@ interface TriggerResponse {
   skippedNoPhone: number;
   skippedAlreadyMessaged?: number;
 }
+interface TemplateInfo {
+  name: "booking_confirmation" | "pre_arrival" | "post_stay";
+  body: string | null; // null → built-in default copy
+  custom: boolean;
+  placeholders: string[];
+  sample: string | null; // rendered preview from the server (custom bodies)
+  auto: boolean;
+}
 
 const TEMPLATE_META: Record<string, { label: string; badge: string }> = {
   booking_confirmation: { label: "Booking Conf.", badge: "border-pine-700/30 bg-pine-100 text-pine-700" },
@@ -50,13 +60,21 @@ const STATUS_BADGE: Record<string, string> = {
   failed: "border-danger/30 bg-danger/10 text-danger",
 };
 
+/** Client-side placeholder renderer — mirrors the server's renderWaTemplate. */
+function renderPreview(body: string, vars: Record<string, string | number>): string {
+  return body.replace(/\{(\w+)\}/g, (m, key: string) => (key in vars ? String(vars[key]) : m));
+}
+
 export default function WhatsAppView() {
   const { toast } = useToast();
+  const user = useSession((s) => s.user);
 
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [messages, setMessages] = useState<WhatsAppMessage[] | null>(null);
+  const [templates, setTemplates] = useState<TemplateInfo[] | null>(null);
   const [templateFilter, setTemplateFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [bulkBusy, setBulkBusy] = useState<string | null>(null);
 
@@ -66,16 +84,23 @@ export default function WhatsAppView() {
   const [customBody, setCustomBody] = useState("");
   const [sending, setSending] = useState(false);
 
+  // customize-template dialog
+  const [editName, setEditName] = useState<TemplateInfo["name"] | null>(null);
+  const [editBody, setEditBody] = useState("");
+  const [savingTpl, setSavingTpl] = useState(false);
+
   const load = useCallback(async () => {
     try {
-      const [s, m] = await Promise.all([
+      const [s, m, t] = await Promise.all([
         api<StatusResponse>("/api/whatsapp/status"),
         api<{ messages: WhatsAppMessage[] }>(
           `/api/whatsapp/messages${qs({ template: templateFilter, status: statusFilter })}`
         ),
+        api<{ templates: TemplateInfo[] }>("/api/whatsapp/templates").catch(() => null),
       ]);
       setStatus(s);
       setMessages(m.messages);
+      if (t) setTemplates(t.templates);
     } catch {
       /* keep stale */
     }
@@ -89,6 +114,61 @@ export default function WhatsAppView() {
 
   const lastSent = (template: string) =>
     messages?.find((m) => m.templateName === template)?.createdAt ?? null;
+
+  const tplByName = (name: TemplateInfo["name"]) => templates?.find((t) => t.name === name);
+
+  const toggleAuto = async (name: TemplateInfo["name"], auto: boolean) => {
+    setTemplates((prev) => prev?.map((t) => (t.name === name ? { ...t, auto } : t)) ?? prev);
+    try {
+      await api("/api/whatsapp/templates", { method: "PATCH", body: JSON.stringify({ templateName: name, auto }) });
+      toast({ title: auto ? "Automatic sending on" : "Automatic sending off", description: `${TEMPLATE_META[name].label} — ${auto ? "guests get it automatically" : "only when you send it manually"}` });
+    } catch (e) {
+      setTemplates((prev) => prev?.map((t) => (t.name === name ? { ...t, auto: !auto } : t)) ?? prev);
+      toast({ title: "Could not update", description: (e as Error).message, variant: "destructive" });
+    }
+  };
+
+  const openCustomize = (name: TemplateInfo["name"]) => {
+    const t = tplByName(name);
+    setEditName(name);
+    setEditBody(t?.body ?? ""); // stored copy; empty shows the default hint
+  };
+
+  const saveTemplate = async (reset = false) => {
+    if (!editName) return;
+    setSavingTpl(true);
+    try {
+      await api("/api/whatsapp/templates", {
+        method: "PATCH",
+        body: JSON.stringify({ templateName: editName, body: reset ? "" : editBody }),
+      });
+      toast({ title: reset ? "Template reset to default" : "Template saved" });
+      setEditName(null);
+      load();
+    } catch (e) {
+      toast({ title: "Save failed", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setSavingTpl(false);
+    }
+  };
+
+  /** Live preview for the customize dialog (sample guest data). */
+  const editPreview = () => {
+    const t = editName ? tplByName(editName) : null;
+    if (!t || !editName) return "";
+    const tomorrow = new Date(Date.now() + 86400000);
+    const vars: Record<string, string | number> = {
+      hotel: user?.propertyName || "Your Hotel",
+      guest: "Rahul",
+      confirmation: "VX-24816",
+      room: "Deluxe Room",
+      checkin: tomorrow.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+      nights: 2,
+      amount: "₹8,500",
+    };
+    if (!editBody.trim()) return "(Using the built-in default — start typing to customize)";
+    return renderPreview(editBody, vars);
+  };
 
   const triggerBulk = async (kind: "pre_arrival" | "post_stay") => {
     setBulkBusy(kind);
@@ -144,6 +224,12 @@ export default function WhatsAppView() {
     }
   };
 
+  const filteredMessages = (messages ?? []).filter((m) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return m.toPhone.toLowerCase().includes(q) || m.body.toLowerCase().includes(q) || (m.reservation?.confirmationNumber ?? "").toLowerCase().includes(q);
+  });
+
   return (
     <div className="space-y-4">
       {/* Header: provider status */}
@@ -174,10 +260,20 @@ export default function WhatsAppView() {
               <span className="text-[11px] text-muted-ink hidden md:block">
                 {status.phoneIdSet
                   ? `Phone ID ${status.fromNumber}`
-                  : "Set WHATSAPP_TOKEN + WHATSAPP_PHONE_ID to go live — messages are logged as Simulated meanwhile"}
+                  : "Connect your WhatsApp Cloud API from Settings → WhatsApp API to go live"}
               </span>
             </>
           )}
+          <button
+            type="button"
+            className="btn-outline h-9 text-xs"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent("velurex:navigate", { detail: "settings" }));
+              toast({ title: "Opening Settings", description: "Use the WhatsApp API tab to connect your Cloud API credentials." });
+            }}
+          >
+            <Settings2 className="h-4 w-4" /> Manage connection
+          </button>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button className="btn-brass h-9">
@@ -227,6 +323,9 @@ export default function WhatsAppView() {
           title="Booking Confirmation"
           description="Fires automatically the moment an online booking is confirmed — room, dates and amount included."
           lastSent={lastSent("booking_confirmation")}
+          tpl={tplByName("booking_confirmation")}
+          onToggleAuto={toggleAuto}
+          onCustomize={openCustomize}
           footer={<span className="text-[11px] text-muted-ink">Automatic on booking_engine bookings</span>}
         />
         <TemplateCard
@@ -234,6 +333,9 @@ export default function WhatsAppView() {
           title="Pre-arrival Reminder"
           description="Goes to tomorrow's confirmed arrivals — offers airport pickup and early check-in. Fires automatically at night audit; duplicates are never sent."
           lastSent={lastSent("pre_arrival")}
+          tpl={tplByName("pre_arrival")}
+          onToggleAuto={toggleAuto}
+          onCustomize={openCustomize}
           footer={
             <button className="btn-outline h-8 text-xs" onClick={() => triggerBulk("pre_arrival")} disabled={bulkBusy === "pre_arrival"}>
               {bulkBusy === "pre_arrival" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
@@ -246,6 +348,9 @@ export default function WhatsAppView() {
           title="Post-stay Feedback"
           description="Sent to guests who checked out today — asks for a 1-5 rating reply."
           lastSent={lastSent("post_stay")}
+          tpl={tplByName("post_stay")}
+          onToggleAuto={toggleAuto}
+          onCustomize={openCustomize}
           footer={
             <button className="btn-outline h-8 text-xs" onClick={() => triggerBulk("post_stay")} disabled={bulkBusy === "post_stay"}>
               {bulkBusy === "post_stay" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
@@ -255,11 +360,79 @@ export default function WhatsAppView() {
         />
       </div>
 
+      {/* Customize-template dialog */}
+      <Dialog open={!!editName} onOpenChange={(o) => !o && setEditName(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-display text-pine">
+              Customize — {editName ? TEMPLATE_META[editName].label : ""}
+            </DialogTitle>
+            <DialogDescription>
+              Personalise the copy. Use placeholders like <code className="text-pine font-mono text-[11px]">{"{guest}"}</code> — they fill in per guest automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {editName && (
+              <div className="flex flex-wrap gap-1.5">
+                {(tplByName(editName)?.placeholders ?? []).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className="badge border-line-strong bg-plaster text-[10.5px] text-muted-ink hover:text-pine hover:border-pine/40 transition cursor-pointer"
+                    onClick={() => setEditBody((b) => `${b}${b && !b.endsWith(" ") ? " " : ""}${p}`)}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            )}
+            <Textarea
+              rows={5}
+              value={editBody}
+              onChange={(e) => setEditBody(e.target.value)}
+              placeholder={
+                editName === "booking_confirmation"
+                  ? "Hi {guest}! Your booking {confirmation} at {hotel} is confirmed. 🏨 Room: {room} · Check-in: {checkin} · {nights} night(s) · {amount}"
+                  : editName === "pre_arrival"
+                    ? "Hi {guest}, we look forward to welcoming you to {hotel} tomorrow! Your booking {confirmation} — check-in from 2 PM. Need an airport pickup or early check-in? Just reply here."
+                    : "Thank you for staying with us at {hotel}, {guest}! We'd love your feedback — rate your stay 1-5 by replying to this message."
+              }
+              maxLength={1000}
+            />
+            <div className="rounded-md bg-plaster/60 border border-line px-3.5 py-3">
+              <p className="text-[10.5px] uppercase tracking-[0.14em] text-muted-ink mb-1.5">Preview (sample data)</p>
+              <p className="text-[13px] whitespace-pre-wrap text-ink">{editPreview()}</p>
+            </div>
+          </div>
+          <DialogFooter className="justify-between">
+            <Button variant="ghost" className="text-muted-ink" onClick={() => saveTemplate(true)} disabled={savingTpl}>
+              Reset to default
+            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setEditName(null)}>Cancel</Button>
+              <Button className="btn-brass" onClick={() => saveTemplate(false)} disabled={savingTpl}>
+                {savingTpl ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Message log */}
       <div className="panel">
         <div className="panel-header">
           <p className="panel-title">Message log</p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-ink" />
+              <input
+                className="field h-8 w-40 pl-8 text-xs"
+                placeholder="Search phone / text…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                aria-label="Search messages"
+              />
+            </div>
             <select
               className="field h-8 w-auto text-xs py-0"
               value={templateFilter}
@@ -299,7 +472,7 @@ export default function WhatsAppView() {
               </tr>
             </thead>
             <tbody>
-              {(messages ?? []).map((m) => (
+              {filteredMessages.map((m) => (
                 <WhatsAppRow
                   key={m.id}
                   m={m}
@@ -311,6 +484,13 @@ export default function WhatsAppView() {
                 <tr>
                   <td className="td text-center text-muted-ink" colSpan={7}>
                     No messages yet — bookings and bulk triggers will appear here.
+                  </td>
+                </tr>
+              )}
+              {messages && messages.length > 0 && filteredMessages.length === 0 && (
+                <tr>
+                  <td className="td text-center text-muted-ink" colSpan={7}>
+                    No messages match “{search}”.
                   </td>
                 </tr>
               )}
@@ -326,19 +506,25 @@ export default function WhatsAppView() {
 }
 
 function TemplateCard({
-  icon, title, description, lastSent, footer,
+  icon, title, description, lastSent, footer, tpl, onToggleAuto, onCustomize,
 }: {
   icon: React.ReactNode;
   title: string;
   description: string;
   lastSent: string | null;
   footer: React.ReactNode;
+  tpl?: TemplateInfo;
+  onToggleAuto: (name: TemplateInfo["name"], auto: boolean) => void;
+  onCustomize: (name: TemplateInfo["name"]) => void;
 }) {
   return (
     <div className="panel p-4 flex flex-col gap-2">
       <div className="flex items-center gap-2.5">
         <div className="h-8 w-8 rounded-md bg-plaster-deep/60 flex items-center justify-center shrink-0">{icon}</div>
-        <p className="font-display font-semibold text-pine">{title}</p>
+        <p className="font-display font-semibold text-pine flex-1">{title}</p>
+        {tpl?.custom && (
+          <span className="badge border-pine-700/30 bg-pine-100 text-pine-700 text-[10px]">Customized</span>
+        )}
       </div>
       <p className="text-xs text-muted-ink flex-1">{description}</p>
       {lastSent && (
@@ -346,7 +532,29 @@ function TemplateCard({
           <Clock className="h-3 w-3" /> Last sent {fmtDateTime(lastSent)}
         </p>
       )}
-      <div>{footer}</div>
+      {tpl && (
+        <div className="flex items-center justify-between gap-2 rounded-md bg-plaster/60 border border-line px-3 py-2">
+          <div className="min-w-0">
+            <p className="text-[12px] font-medium text-ink leading-tight">Auto-send</p>
+            <p className="text-[10.5px] text-muted-ink leading-tight">{tpl.auto ? "On — fires automatically" : "Off — manual only"}</p>
+          </div>
+          <Switch
+            checked={tpl.auto}
+            onCheckedChange={(v) => onToggleAuto(tpl.name, v)}
+            aria-label={`Toggle automatic sending for ${title}`}
+          />
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-2">
+        {tpl ? (
+          <button className="btn-ghost h-8 text-xs" onClick={() => onCustomize(tpl.name)}>
+            <Settings2 className="h-3.5 w-3.5" /> Customize
+          </button>
+        ) : (
+          <span />
+        )}
+        {footer}
+      </div>
     </div>
   );
 }

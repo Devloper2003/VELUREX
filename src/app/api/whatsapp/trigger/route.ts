@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { startOfDay } from "@/lib/business";
-import { postStayMsg, preArrivalMsg, sendWhatsApp } from "@/lib/whatsapp";
+import { buildTemplateBody, getWhatsAppSettings, sendWhatsApp } from "@/lib/whatsapp";
 import { getTenantEntitlements, requireFeature, checkLimit } from "@/lib/entitlements";
 type TriggerKind = "pre_arrival" | "post_stay";
 
@@ -86,11 +86,21 @@ export async function POST(req: NextRequest) {
 
   const eligible = reservations.filter(withPhone);
   const messages: Awaited<ReturnType<typeof sendWhatsApp>>[] = [];
+  const waSettings = await getWhatsAppSettings(propertyId); // manual sends honour template customization too
   for (const reservation of eligible) {
     const bodyText =
       kind === "pre_arrival"
-        ? preArrivalMsg(property.name, reservation.guest.fullName, reservation.confirmationNumber, reservation.checkIn)
-        : postStayMsg(property.name, reservation.guest.fullName);
+        ? buildTemplateBody(
+            "pre_arrival",
+            {
+              hotel: property.name,
+              guest: reservation.guest.fullName,
+              confirmation: reservation.confirmationNumber,
+              checkin: reservation.checkIn,
+            },
+            waSettings
+          )
+        : buildTemplateBody("post_stay", { hotel: property.name, guest: reservation.guest.fullName }, waSettings);
     messages.push(
       await sendWhatsApp({
         propertyId,

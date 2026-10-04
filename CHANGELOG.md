@@ -12,6 +12,19 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.2.0] — 2026-10-04 · WhatsApp Studio
+
+### Added — WhatsApp tab upgrades (req ⑦ parity)
+- **Template Studio**: tenants customize the copy of Booking Confirmation, Pre-arrival and Post-stay messages with placeholders (`{hotel}`, `{guest}`, `{confirmation}`, `{room}`, `{checkin}`, `{nights}`, `{amount}`), live preview on sample data, placeholder quick-chips and one-click "Reset to default". Stored per property (`WhatsAppConfig.templatesJson`, additive — default copy unchanged until customized).
+- **Automation switches**: per-template auto-send toggles (`WhatsAppConfig.automationJson`) — pause/resume the automatic booking confirmation, the night-audit pre-arrival campaign and post-stay sends. Manual bulk triggers always remain available.
+- **Enforced everywhere**: online bookings (`booking-guard`), the night-audit auto campaign (`source:"auto"` now skips when toggled off), manual bulk triggers and reservation-linked sends all render the customized copy (`buildTemplateBody`).
+- New `GET/PATCH /api/whatsapp/templates` (PATCH is hotel_admin-only, validated ≤1000 chars, activity-logged).
+- Message log: search box filtering phone / body / confirmation number; empty-search state.
+- Header: "Manage connection" button jumps to Settings → WhatsApp API.
+- Plan note: WhatsApp automation remains a Pro+ feature — Basic tenants see the existing upgrade dialog.
+
+---
+
 ## [2.1.0] — 2026-10-04 · Always Live
 
 ### Fixed — realtime status stuck on "Polling"

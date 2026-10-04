@@ -1,7 +1,7 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { db } from "@/lib/db";
 import { rateForDate, GST_RATE, logActivity } from "@/lib/business";
-import { bookingConfirmationMsg, sendWhatsApp } from "@/lib/whatsapp";
+import { buildTemplateBody, getWhatsAppSettings, sendWhatsApp } from "@/lib/whatsapp";
 import {
   BLOCKING_STATUSES,
   MAX_NIGHTS,
@@ -453,22 +453,31 @@ export async function confirmHoldPayment(opts: {
   const { hold, reservation, guest } = claimed;
   const roomType = await db.roomType.findUnique({ where: { id: hold.roomTypeId } });
 
-  // Post-commit side effects (never block or roll back the booking).
-  const message = await sendWhatsApp({
-    propertyId: hold.propertyId,
-    toPhone: guest.phone,
-    templateName: "booking_confirmation",
-    body: bookingConfirmationMsg(
-      (await db.property.findUnique({ where: { id: hold.propertyId } }))?.name ?? "the hotel",
-      guest.fullName,
-      reservation.confirmationNumber,
-      hold.checkIn,
-      roomType?.name ?? "",
-      hold.nights,
-      hold.grandTotal
-    ),
-    reservationId: reservation.id,
-  });
+  // Post-commit side effects (never block or roll back the booking). The
+  // confirmation message honours the tenant's template customization and can
+  // be switched off entirely (WhatsApp tab → Booking Confirmation → Auto off).
+  const waSettings = await getWhatsAppSettings(hold.propertyId);
+  const message = waSettings.automation.booking_confirmation
+    ? await sendWhatsApp({
+        propertyId: hold.propertyId,
+        toPhone: guest.phone,
+        templateName: "booking_confirmation",
+        body: buildTemplateBody(
+          "booking_confirmation",
+          {
+            hotel: (await db.property.findUnique({ where: { id: hold.propertyId } }))?.name ?? "the hotel",
+            guest: guest.fullName,
+            confirmation: reservation.confirmationNumber,
+            checkin: hold.checkIn,
+            room: roomType?.name ?? "",
+            nights: hold.nights,
+            amount: hold.grandTotal,
+          },
+          waSettings
+        ),
+        reservationId: reservation.id,
+      })
+    : null;
 
   await logActivity({
     propertyId: hold.propertyId,

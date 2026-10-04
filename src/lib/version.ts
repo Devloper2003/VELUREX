@@ -11,9 +11,9 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.1.0";
+export const APP_VERSION = "2.2.0";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Always Live";
+export const APP_RELEASE_CODENAME = "WhatsApp Studio";
 export const APP_RELEASE_DATE = "2026-10-04";
 
 export type ReleaseNote = {
@@ -25,6 +25,17 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.2.0",
+    date: "2026-10-04",
+    codename: "WhatsApp Studio",
+    highlights: [
+      "Template Studio — customize the copy of all three lifecycle messages with {guest}/{hotel}/{confirmation}… placeholders, live preview and one-click reset",
+      "Automation switches — pause/resume automatic sending per template (booking confirmation, pre-arrival at night audit, post-stay); manual bulk sends always available",
+      "Custom copy is honoured everywhere: online bookings, night-audit campaigns, manual bulk triggers and reservation-linked sends",
+      "Message log search (phone / text / confirmation) and a direct 'Manage connection' link into Settings → WhatsApp API",
+    ],
+  },
   {
     version: "2.1.0",
     date: "2026-10-04",

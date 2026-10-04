@@ -864,6 +864,8 @@ model WhatsAppConfig {
   accessTokenEnc String    @default("") // System-user access token, AES-256-GCM encrypted (never returned in full)
   verifyToken    String    @default("") // webhook verify token (shown to the tenant for Meta App dashboard)
   status         String    @default("disconnected") // disconnected | connected | error
+  templatesJson  String    @default("{}") // per-template body overrides {booking_confirmation,pre_arrival,post_stay} — "" values fall back to defaults
+  automationJson String    @default("{}") // per-template auto-send switches {booking_confirmation,pre_arrival,post_stay} — missing keys default to true
   lastError      String    @default("")
   lastCheckedAt  DateTime?
   connectedAt    DateTime?

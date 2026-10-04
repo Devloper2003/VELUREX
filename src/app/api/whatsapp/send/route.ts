@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
-import { bookingConfirmationMsg, postStayMsg, preArrivalMsg, sendWhatsApp } from "@/lib/whatsapp";
+import { bookingConfirmationMsg, buildTemplateBody, getWhatsAppSettings, postStayMsg, preArrivalMsg, sendWhatsApp } from "@/lib/whatsapp";
 import { getTenantEntitlements, requireFeature, checkLimit } from "@/lib/entitlements";
 
 const TEMPLATES = ["booking_confirmation", "pre_arrival", "post_stay", "custom"];
@@ -112,7 +112,22 @@ export async function POST(req: NextRequest) {
   if (!finalBody) {
     if (templateName === "custom")
       return NextResponse.json({ error: "A message body is required for custom messages" }, { status: 400 });
-    finalBody = defaultBody(templateName, property.name, reservation);
+    // Tenant-customized template (placeholders rendered) wins over the defaults.
+    const waSettings = await getWhatsAppSettings(propertyId);
+    const key = templateName as "booking_confirmation" | "pre_arrival" | "post_stay";
+    if (waSettings.templates[key]?.trim()) {
+      finalBody = buildTemplateBody(key, {
+        hotel: property.name,
+        guest: reservation?.guest.fullName ?? "Guest",
+        confirmation: reservation?.confirmationNumber,
+        room: reservation?.roomType?.name,
+        checkin: reservation?.checkIn,
+        nights: reservation?.nights,
+        amount: reservation?.totalAmount,
+      }, waSettings);
+    } else {
+      finalBody = defaultBody(templateName, property.name, reservation);
+    }
   }
 
   const message = await sendWhatsApp({

@@ -108,6 +108,101 @@ export async function sendWhatsApp({ propertyId, toPhone, templateName, body, re
   });
 }
 
+// ── Template customization & automation switches ─────────────────────────
+// Tenants can override the copy of the three lifecycle templates and pause
+// each automatic flow. Stored on WhatsAppConfig as JSON; missing keys fall
+// back to the built-in defaults below, so existing tenants keep their exact
+// behavior until they change something.
+
+export const WA_TEMPLATE_KEYS = ["booking_confirmation", "pre_arrival", "post_stay"] as const;
+export type WaTemplateName = (typeof WA_TEMPLATE_KEYS)[number];
+
+export const WA_PLACEHOLDERS: Record<WaTemplateName, string[]> = {
+  booking_confirmation: ["{hotel}", "{guest}", "{confirmation}", "{room}", "{checkin}", "{nights}", "{amount}"],
+  pre_arrival: ["{hotel}", "{guest}", "{confirmation}", "{checkin}"],
+  post_stay: ["{hotel}", "{guest}"],
+};
+
+export interface WaSettings {
+  templates: Partial<Record<WaTemplateName, string>>; // stored overrides ("" = use default)
+  automation: Record<WaTemplateName, boolean>; // missing keys default to true
+}
+
+export const WA_AUTOMATION_DEFAULT: Record<WaTemplateName, boolean> = {
+  booking_confirmation: true,
+  pre_arrival: true,
+  post_stay: true,
+};
+
+/** Load a property's template overrides + automation switches (defaults when no config row). */
+export async function getWhatsAppSettings(propertyId: string): Promise<WaSettings> {
+  const cfg = await db.whatsAppConfig.findUnique({
+    where: { propertyId },
+    select: { templatesJson: true, automationJson: true },
+  });
+  let templates: Partial<Record<WaTemplateName, string>> = {};
+  let automation: Partial<Record<WaTemplateName, boolean>> = {};
+  try {
+    templates = JSON.parse(cfg?.templatesJson ?? "{}") as Partial<Record<WaTemplateName, string>>;
+  } catch {
+    /* corrupt JSON → defaults */
+  }
+  try {
+    automation = JSON.parse(cfg?.automationJson ?? "{}") as Partial<Record<WaTemplateName, boolean>>;
+  } catch {
+    /* corrupt JSON → defaults */
+  }
+  return {
+    templates: typeof templates === "object" && templates ? templates : {},
+    automation: { ...WA_AUTOMATION_DEFAULT, ...(typeof automation === "object" && automation ? automation : {}) },
+  };
+}
+
+/** Replace {placeholders} in a stored template body. Unknown placeholders stay untouched. */
+export function renderWaTemplate(body: string, vars: Record<string, string | number>): string {
+  return body.replace(/\{(\w+)\}/g, (m, key: string) => (key in vars ? String(vars[key]) : m));
+}
+
+export interface WaTemplateVars {
+  hotel: string;
+  guest: string;
+  confirmation?: string;
+  room?: string;
+  checkin?: Date;
+  nights?: number;
+  amount?: number;
+}
+
+function fmtDay(d: Date): string {
+  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+/**
+ * Build the final body for a lifecycle template: the tenant's stored override
+ * (placeholders rendered) when customized, otherwise the built-in default copy.
+ */
+export function buildTemplateBody(name: WaTemplateName, vars: WaTemplateVars, settings?: WaSettings): string {
+  const stored = settings?.templates?.[name]?.trim();
+  if (stored) {
+    return renderWaTemplate(stored, {
+      hotel: vars.hotel,
+      guest: vars.guest,
+      confirmation: vars.confirmation ?? "",
+      room: vars.room ?? "",
+      checkin: vars.checkin ? fmtDay(vars.checkin) : "",
+      nights: vars.nights ?? "",
+      amount: vars.amount !== undefined ? `₹${Math.round(vars.amount).toLocaleString("en-IN")}` : "",
+    });
+  }
+  if (name === "booking_confirmation") {
+    return bookingConfirmationMsg(vars.hotel, vars.guest, vars.confirmation ?? "", vars.checkin ?? new Date(), vars.room ?? "", vars.nights ?? 1, vars.amount ?? 0);
+  }
+  if (name === "pre_arrival") {
+    return preArrivalMsg(vars.hotel, vars.guest, vars.confirmation ?? "", vars.checkin ?? new Date());
+  }
+  return postStayMsg(vars.hotel, vars.guest);
+}
+
 export function bookingConfirmationMsg(hotelName: string, guestName: string, conf: string, checkIn: Date, roomName: string, nights: number, total: number) {
   return `Hi ${guestName.split(" ")[0]}! Your booking ${conf} at ${hotelName} is confirmed. 🏨\nRoom: ${roomName}\nCheck-in: ${checkIn.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} (2 PM onwards) · ${nights} night(s)\nAmount: ₹${Math.round(total).toLocaleString("en-IN")}\nWe look forward to hosting you!`;
 }
@@ -124,11 +219,22 @@ export function postStayMsg(hotelName: string, guestName: string) {
  * Idempotent pre-arrival campaign runner: finds confirmed arrivals on the
  * given day (default: tomorrow) that have a phone number and have NOT already
  * received a pre_arrival message, sends each one, and returns the tally.
- * Used both by the manual bulk trigger and by the night-audit auto-trigger.
+ * Used both by the manual bulk trigger (source "manual") and by the
+ * night-audit auto-trigger (source "auto" — honours the tenant's automation
+ * switch; when it is off the campaign is skipped entirely).
  */
-export async function runPreArrivalCampaign(propertyId: string, forDay?: Date) {
+export async function runPreArrivalCampaign(
+  propertyId: string,
+  forDay?: Date,
+  opts?: { source?: "manual" | "auto" }
+) {
+  const settings = await getWhatsAppSettings(propertyId);
+  if (opts?.source === "auto" && !settings.automation.pre_arrival) {
+    return { sent: 0, eligible: 0, skippedNoPhone: 0, skippedAlreadyMessaged: 0, skippedAutomation: 1 };
+  }
+
   const property = await db.property.findUnique({ where: { id: propertyId }, select: { name: true } });
-  if (!property) return { sent: 0, eligible: 0, skippedNoPhone: 0, skippedAlreadyMessaged: 0 };
+  if (!property) return { sent: 0, eligible: 0, skippedNoPhone: 0, skippedAlreadyMessaged: 0, skippedAutomation: 0 };
 
   const target = forDay ?? startOfDay(new Date(Date.now() + 86400000));
   const dayStart = startOfDay(target);
@@ -156,7 +262,16 @@ export async function runPreArrivalCampaign(propertyId: string, forDay?: Date) {
       propertyId,
       toPhone: reservation.guest.phone,
       templateName: "pre_arrival",
-      body: preArrivalMsg(property.name, reservation.guest.fullName, reservation.confirmationNumber, reservation.checkIn),
+      body: buildTemplateBody(
+        "pre_arrival",
+        {
+          hotel: property.name,
+          guest: reservation.guest.fullName,
+          confirmation: reservation.confirmationNumber,
+          checkin: reservation.checkIn,
+        },
+        settings
+      ),
       reservationId: reservation.id,
     });
     if (message.status !== "failed") sent++;
@@ -167,5 +282,6 @@ export async function runPreArrivalCampaign(propertyId: string, forDay?: Date) {
     eligible: eligible.length,
     skippedNoPhone: reservations.filter((r) => r.guest.phone.trim().length === 0).length,
     skippedAlreadyMessaged: reservations.length - eligible.length - reservations.filter((r) => r.guest.phone.trim().length === 0).length,
+    skippedAutomation: 0,
   };
 }

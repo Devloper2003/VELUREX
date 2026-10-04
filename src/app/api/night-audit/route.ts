@@ -315,7 +315,7 @@ export async function POST(req: NextRequest) {
   // messaging outage must never fail the night audit.
   let preArrival: Awaited<ReturnType<typeof runPreArrivalCampaign>> | null = null;
   try {
-    preArrival = await runPreArrivalCampaign(propertyId, nextBusinessDate);
+    preArrival = await runPreArrivalCampaign(propertyId, nextBusinessDate, { source: "auto" });
   } catch {
     /* messaging is optional — keep the audit result intact */
   }
