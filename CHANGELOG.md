@@ -8,7 +8,14 @@ All notable changes to Velurex HMS are documented here, newest first.
 - **MAJOR** — big milestone, pricing/data-model migration, or rebrand.
 - **MINOR** — a feature drop: new functionality shipped to production.
 - **PATCH** — bug fixes and UI polish with no new features.
-- Single source of truth: `src/lib/version.ts` (`APP_VERSION` + `RELEASES`). The in-app **What's new** dialog (sidebar & console footers) and `GET /api/health` render from it — keep it in sync with this file on every release.
+- Single source of truth: `src/lib/version.ts` (`APP_VERSION` + `RELEASES`). In the product UI the version appears as plain text in the tenant sidebar/footer and platform-console footer, and `GET /api/health` reports it — keep this file in sync on every release.
+
+---
+
+## [2.0.1] — 2026-10-04 · Polish Patch
+
+### Changed
+- Tenant sidebar/footer and platform-console footer: the version marker is now plain, non-interactive text (`Velurex HMS v2.0.1`) — the brass highlight pill and the clickable "What's new" dialog were removed per product decision. Release history remains documented here and in `src/lib/version.ts`; `GET /api/health` still reports `APP_VERSION`.
 
 ---
 

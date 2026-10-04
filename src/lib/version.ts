@@ -6,14 +6,14 @@
  *  - MINOR  a feature drop shipped to production (new functionality)
  *  - PATCH  bug fixes & UI polish with no new features
  * Every change that lands on `main` MUST carry a version bump and a
- * CHANGELOG.md entry. Keep this file in sync with CHANGELOG.md — the
- * in-app "What's new" dialog renders straight from RELEASES.
+ * CHANGELOG.md entry. Keep this file in sync with CHANGELOG.md — that file is
+ * the human-readable record; RELEASES below is the machine-readable mirror.
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.0.0";
+export const APP_VERSION = "2.0.1";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Growth Release";
+export const APP_RELEASE_CODENAME = "Polish Patch";
 export const APP_RELEASE_DATE = "2026-10-04";
 
 export type ReleaseNote = {
@@ -25,6 +25,14 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.0.1",
+    date: "2026-10-04",
+    codename: "Polish Patch",
+    highlights: [
+      "Tenant sidebar & platform-console footers: version is now plain, non-interactive text — no highlight pill, no click target",
+    ],
+  },
   {
     version: "2.0.0",
     date: "2026-10-04",

@@ -15,7 +15,6 @@ import { BrandMark } from "@/components/auth/LoginScreen";
 import { cn } from "@/lib/utils";
 import { NAV, VIEW_TITLES, GO_KEYS, isGroup } from "./nav-config";
 import { CommandPalette, ShortcutsDialog } from "./CommandPalette";
-import { VersionBadge } from "./VersionBadge";
 import { APP_NAME, APP_VERSION_TAG } from "@/lib/version";
 
 import DashboardView from "@/components/views/DashboardView";
@@ -397,10 +396,7 @@ export function AppShell() {
       </nav>
       <div className="border-t border-pine-700/60 px-5 py-4">
         <p className="text-[13px] font-medium truncate">{user.propertyName}</p>
-        <div className="mt-0.5 flex items-center gap-1.5">
-          <span className="text-[11px] text-panel/50">{APP_NAME}</span>
-          <VersionBadge variant="dark" />
-        </div>
+        <p className="text-[11px] text-panel/50 mt-0.5">{APP_NAME} {APP_VERSION_TAG}</p>
       </div>
     </aside>
   );
@@ -675,8 +671,6 @@ export function AppShell() {
         <footer className="mt-auto border-t border-line bg-panel/70 px-6 py-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-ink">
           <span>© {new Date().getFullYear()} Velurex HMS · {user?.propertyName || "Velurex HMS"}</span>
           <span className="flex items-center gap-3">
-            <VersionBadge variant="light" />
-            <span className="text-brass">·</span>
             <button type="button" className="hover:text-pine transition" onClick={() => setShortcutsOpen(true)}>
               <kbd className="cmd-kbd">?</kbd> shortcuts
             </button>
