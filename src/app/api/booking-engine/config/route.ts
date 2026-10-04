@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { parseAmenities } from "../_shared";
 
@@ -10,9 +10,18 @@ import { parseAmenities } from "../_shared";
  * carries everything the upgraded storefront needs: per-room-type photo
  * galleries, the property's stay policy (check-in/out times, cancellation,
  * minimum nights) and the active add-ons (upsells).
+ *
+ * Supports an optional `?property=<id>` so each tenant can host its own
+ * booking page (`/book?property=...`); without the param the flagship
+ * (first-created) property is served, preserving legacy behavior.
  */
-export async function GET() {
-  const property = await db.property.findFirst({ orderBy: { createdAt: "asc" } });
+export async function GET(req: NextRequest) {
+  const requestedId = req.nextUrl.searchParams.get("property") ?? "";
+  const property = requestedId
+    ? await db.property.findFirst({
+        where: { id: requestedId, deletedAt: null },
+      })
+    : await db.property.findFirst({ orderBy: { createdAt: "asc" } });
   if (!property) return NextResponse.json({ error: "Property not configured" }, { status: 404 });
 
   const [roomTypes, upsells] = await Promise.all([

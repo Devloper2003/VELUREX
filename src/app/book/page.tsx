@@ -67,6 +67,8 @@ interface AvailabilityResponse {
   hotelName: string;
   city: string;
   nights: number;
+  checkIn?: string;
+  checkOut?: string;
   roomTypes: QuotedRoomType[];
 }
 interface PromoResponse {
@@ -149,7 +151,19 @@ function fmtDay(iso: string): string {
   return `${WDAYS_SHORT[dt.getDay()]}, ${d} ${MONTHS_SHORT[m - 1]}`;
 }
 
-// ─── Page ────────────────────────────────────────────────────────────────────
+// ─── Page ────────────────────────────────────────────────────────────────
+
+/**
+ * Per-tenant hosted pages: /book?property=<id> targets one property's
+ * storefront. Read once at module scope (client) — absent on the flagship
+ * fallback path, so legacy links are untouched.
+ */
+const STOREFRONT_PROPERTY =
+  typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("property") ?? ""
+    : "";
+const storeQs = STOREFRONT_PROPERTY ? `?property=${encodeURIComponent(STOREFRONT_PROPERTY)}` : "";
+const storeQa = STOREFRONT_PROPERTY ? `&property=${encodeURIComponent(STOREFRONT_PROPERTY)}` : "";
 
 type Step = "rooms" | "addons" | "guest" | "confirmed";
 
@@ -235,7 +249,7 @@ export default function BookPage() {
   const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   useEffect(() => {
-    fetch("/api/booking-engine/config")
+    fetch(`/api/booking-engine/config${storeQs}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`Config unavailable (${r.status})`))))
       .then((d: ConfigResponse) => setConfig(d))
       .catch((e: Error) => setConfigError(e.message));
@@ -271,7 +285,7 @@ export default function BookPage() {
     setAvailError(null);
     try {
       const r = await fetch(
-        `/api/booking-engine/availability?checkIn=${checkIn}&checkOut=${checkOut}&adults=${adults}`
+        `/api/booking-engine/availability?checkIn=${checkIn}&checkOut=${checkOut}&adults=${adults}${storeQa}`
       );
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || `Search failed (${r.status})`);
@@ -366,7 +380,7 @@ export default function BookPage() {
     setHoldBusy(true);
     try {
       if (!idemKeyRef.current) idemKeyRef.current = `checkout-${crypto.randomUUID()}`;
-      const r = await fetch("/api/booking-engine/hold", {
+      const r = await fetch(`/api/booking-engine/hold${storeQs}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -497,7 +511,7 @@ export default function BookPage() {
     setFormError(null);
     try {
       if (!idemKeyRef.current) idemKeyRef.current = `book-${crypto.randomUUID()}`;
-      const r = await fetch("/api/booking-engine/book", {
+      const r = await fetch(`/api/booking-engine/book${storeQs}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1086,7 +1100,7 @@ export default function BookPage() {
                     <h2 className="section-title">Choose your room</h2>
                     <p className="text-[13px] text-muted-ink mt-1">
                       {searched && availability
-                        ? `${availability.nights} night${availability.nights === 1 ? "" : "s"} · ${fmtDay(checkIn)} → ${fmtDay(checkOut)} · live availability`
+                        ? `${availability.nights} night${availability.nights === 1 ? "" : "s"} · ${fmtDay(availability.checkIn ?? checkIn)} → ${fmtDay(availability.checkOut ?? checkOut)} · live availability`
                         : "Enter your dates to see live availability and rates"}
                     </p>
                   </div>

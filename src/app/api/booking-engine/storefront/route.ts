@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { logActivity } from "@/lib/business";
-import { getPrimaryProperty, parseAmenities } from "../_shared";
+import { parseAmenities } from "../_shared";
 
 /**
  * Storefront configuration API (hotel_admin) — backs the "Storefront" tab of
@@ -32,11 +32,9 @@ export async function GET(req: NextRequest) {
   const auth = await requireAuth(req, ["hotel_admin"]);
   if ("error" in auth) return auth.error;
 
-  // Each tenant manages ITS OWN storefront (policies / photos / add-ons).
-  // The public /book page currently serves the platform's primary property
-  // only — `isPrimary` tells the UI whether this tenant IS that property.
-  const primary = await getPrimaryProperty();
-  const isPrimary = !!primary && primary.id === auth.session.propertyId;
+  // Each tenant manages ITS OWN storefront (policies / photos / add-ons) and
+  // gets its own hosted booking page at /book?property=<id>.
+  const hostedUrl = `/book?property=${auth.session.propertyId}`;
   const property = await db.property.findUnique({ where: { id: auth.session.propertyId } });
   if (!property) return NextResponse.json({ error: "Property not configured" }, { status: 404 });
 
@@ -53,7 +51,7 @@ export async function GET(req: NextRequest) {
   ]);
 
   return NextResponse.json({
-    isPrimary,
+    hostedUrl,
     policy: {
       checkInTime: property.checkInTime,
       checkOutTime: property.checkOutTime,

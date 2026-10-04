@@ -14,7 +14,8 @@ export const MAX_NIGHTS = 31;
 export const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** The booking engine serves the property's public storefront — single-property install. */
-export async function getPrimaryProperty() {
+export async function getPrimaryProperty(id?: string) {
+  if (id) return db.property.findFirst({ where: { id, deletedAt: null } });
   return db.property.findFirst({ orderBy: { createdAt: "asc" } });
 }
 
@@ -109,11 +110,11 @@ export interface QuotedRoomType {
  * overlapping reservation [confirmed | checked_in | hold] NOR by an active
  * booking-engine hold (race-condition guard), taking the worst night.
  */
-export async function computeAvailability(checkIn: Date, checkOut: Date): Promise<{
+export async function computeAvailability(checkIn: Date, checkOut: Date, propertyId?: string): Promise<{
   property: NonNullable<Awaited<ReturnType<typeof getPrimaryProperty>>>;
   roomTypes: QuotedRoomType[];
 } | null> {
-  const property = await getPrimaryProperty();
+  const property = await getPrimaryProperty(propertyId);
   if (!property) return null;
 
   const nights = nightDates(checkIn, checkOut);

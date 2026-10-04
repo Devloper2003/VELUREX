@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   if (!checkIn || !checkOut) return NextResponse.json({ error: "Valid checkIn and checkOut (YYYY-MM-DD) are required" }, { status: 400 });
   if (checkOut <= checkIn) return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
 
-  const property = await getPrimaryProperty();
+  const property = await getPrimaryProperty(req.nextUrl.searchParams.get("property") ?? undefined);
   if (!property) return NextResponse.json({ error: "Property not configured" }, { status: 404 });
 
   const rt = await db.roomType.findFirst({ where: { id: body.roomTypeId, propertyId: property.id } });

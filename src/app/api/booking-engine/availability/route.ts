@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   if (checkOut <= checkIn)
     return NextResponse.json({ error: "checkOut must be after checkIn" }, { status: 400 });
 
-  const result = await computeAvailability(checkIn, checkOut);
+  const result = await computeAvailability(checkIn, checkOut, searchParams.get("property") ?? undefined);
   if (!result) return NextResponse.json({ error: "Property not configured" }, { status: 404 });
 
   const nights = result.roomTypes[0]?.nightlyRates.length ?? 0;

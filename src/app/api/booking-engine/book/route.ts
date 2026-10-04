@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
 
   if (!body.roomTypeId) return NextResponse.json({ error: "roomTypeId is required" }, { status: 400 });
 
-  const property = await getPrimaryProperty();
+  const property = await getPrimaryProperty(req.nextUrl.searchParams.get("property") ?? undefined);
   if (!property) return NextResponse.json({ error: "Property not configured" }, { status: 404 });
 
   // Minimum-stay policy — same rule the availability/hold endpoints enforce.

@@ -100,7 +100,7 @@ interface UpsellRow {
   sortOrder: number;
 }
 interface StorefrontData {
-  isPrimary: boolean;
+  hostedUrl: string;
   policy: { checkInTime: string; checkOutTime: string; cancellationPolicy: string; minNights: number };
   roomTypes: { id: string; name: string; code: string; baseRate: number; photos: string[]; amenities: string[] }[];
   upsells: UpsellRow[];
@@ -1472,13 +1472,13 @@ function StorefrontTab() {
         <p className="text-sm text-muted-ink">
           Everything here is shown to guests on the public booking page.
         </p>
-        {data.isPrimary ? (
-          <a href="/book" target="_blank" rel="noopener noreferrer" className="btn-outline h-9 justify-center" title="Open the guest-facing booking page in a new tab">
+        {data.hostedUrl ? (
+          <a href={data.hostedUrl} target="_blank" rel="noopener noreferrer" className="btn-outline h-9 justify-center" title="Open your guest-facing booking page in a new tab">
             <Globe className="h-4 w-4 text-brass" /> Open public storefront
           </a>
         ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-line bg-plaster px-2.5 h-8 text-[11px] text-muted-ink" title="The hosted /book page currently showcases the platform's flagship property — your policies and add-ons are saved for your property and will go live when per-property storefronts roll out.">
-            <Info className="h-3.5 w-3.5 text-brass" /> Saved for your property — hosted page shows the flagship property
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-line bg-plaster px-2.5 h-8 text-[11px] text-muted-ink">
+            <Info className="h-3.5 w-3.5 text-brass" /> Saved for your property
           </span>
         )}
       </div>
