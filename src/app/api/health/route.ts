@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { APP_VERSION } from "@/lib/version";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +49,7 @@ export async function GET() {
       ok,
       status: ok ? "healthy" : "degraded",
       service: "velurex-hms",
-      version: "1.0.0",
+      version: APP_VERSION,
       uptimeSec: Math.round(process.uptime()),
       checks: { database, realtime },
       businessDate,

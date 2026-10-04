@@ -18,6 +18,7 @@ import {
 import { BrandMark } from "@/components/auth/LoginScreen";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import { VersionBadge } from "@/components/shell/VersionBadge";
 
 import OwnerDashboardView from "./views/DashboardView";
 import OwnerAnalyticsView from "./views/AnalyticsView";
@@ -275,9 +276,13 @@ export function OwnerShell() {
 
         <footer className="mt-auto border-t border-line bg-panel/70 px-6 py-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-ink">
           <span>© {new Date().getFullYear()} Velurex Technologies · Platform Console</span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-brass" aria-hidden />
-            Owner access · all actions audited
+          <span className="flex items-center gap-2">
+            <VersionBadge variant="light" />
+            <span className="text-brass">·</span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-brass" aria-hidden />
+              Owner access · all actions audited
+            </span>
           </span>
         </footer>
       </div>
