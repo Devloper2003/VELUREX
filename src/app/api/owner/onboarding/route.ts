@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/auth";
+import { PLAN_CORE_SELECT } from "@/lib/plan-safe";
 import { logPlatformAction } from "@/lib/platform";
 import { demoScope, notDemoPlatform, notDemoTenantId } from "@/lib/owner-demo";
 
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
     db.lead.findMany({ where: notDemoPlatform(scope), orderBy: { updatedAt: "desc" } }),
     db.property.findMany({
       where: { deletedAt: null, ...notDemoTenantId(scope) },
-      include: { subscription: { include: { plan: true } }, checklist: true },
+      include: { subscription: { include: { plan: { select: PLAN_CORE_SELECT } } }, checklist: true },
     }),
   ]);
 

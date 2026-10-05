@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/auth";
+import { PLAN_CORE_SELECT, findPlanSafe } from "@/lib/plan-safe";
 import { getTenantEntitlements, clearEntitlementsCache } from "@/lib/entitlements";
 import { logPlatformAction, nextInvoiceNumber, platformGstRate, cyclePrice } from "@/lib/platform";
 
@@ -15,7 +16,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   const property = await db.property.findUnique({
     where: { id },
     include: {
-      subscription: { include: { plan: true } },
+      subscription: { include: { plan: { select: PLAN_CORE_SELECT } } },
       addons: { where: { active: true } },
       overrides: true,
       staff: { orderBy: { createdAt: "asc" } },
@@ -79,7 +80,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const owner = auth.session;
   const { id } = await params;
 
-  const property = await db.property.findUnique({ where: { id }, include: { subscription: { include: { plan: true } } } });
+  const property = await db.property.findUnique({ where: { id }, include: { subscription: { include: { plan: { select: PLAN_CORE_SELECT } } } } });
   if (!property) return NextResponse.json({ error: "Business not found" }, { status: 404 });
 
   const body = await req.json().catch(() => ({}));
@@ -134,7 +135,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     case "change_plan": {
       const newPlanId = String(body.planId ?? "");
       const newCycle = ["monthly", "quarterly", "yearly"].includes(body.cycle) ? body.cycle : property.subscription?.cycle ?? "monthly";
-      const plan = await db.plan.findUnique({ where: { id: newPlanId } });
+      const plan = await findPlanSafe(newPlanId);
       if (!plan) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
 
       const oldPlan = property.subscription?.plan;

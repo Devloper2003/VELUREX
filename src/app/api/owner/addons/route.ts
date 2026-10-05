@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/auth";
 import { clearEntitlementsCache } from "@/lib/entitlements";
+import { isSchemaGapError, schemaGapResponse } from "@/lib/plan-safe";
 import { logPlatformAction } from "@/lib/platform";
 import { stringifyGrants } from "@/lib/feature-catalog";
 
@@ -16,7 +17,15 @@ export async function GET(req: NextRequest) {
   const auth = await requireOwner(req);
   if ("error" in auth) return auth.error;
 
-  const rows = await db.addonCatalog.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] });
+  let rows;
+  try {
+    rows = await db.addonCatalog.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] });
+  } catch (err) {
+    if (!isSchemaGapError(err)) throw err;
+    // Catalogue table not provisioned yet (pre-v2.3.0 database) — the console
+    // renders an empty marketplace instead of crashing.
+    return NextResponse.json({ addons: [], schemaReady: false });
+  }
   const purchases = await db.subscriptionAddon.groupBy({
     by: ["addonKey"],
     _count: { _all: true },
@@ -67,29 +76,40 @@ export async function POST(req: NextRequest) {
   const finalKey = key || name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
   if (!finalKey) return NextResponse.json({ error: "Could not derive a key from the name" }, { status: 400 });
 
-  const exists = await db.addonCatalog.findUnique({ where: { key: finalKey } });
+  // On pre-v2.3.0 databases this lookup cannot run — the create below then
+  // returns the guarded 503, so treat any schema gap here as "not exists".
+  const exists = await db.addonCatalog
+    .findUnique({ where: { key: finalKey }, select: { id: true } })
+    .catch((err: unknown) => (isSchemaGapError(err) ? null : Promise.reject(err)));
   if (exists) return NextResponse.json({ error: `Add-on key "${finalKey}" already exists` }, { status: 409 });
 
   const category = VALID_CATEGORIES.includes(String(body.category)) ? String(body.category) : "feature";
   const price = Math.max(0, Number(body.price ?? 0));
   const planCodes: string[] = Array.isArray(body.planCodes) ? body.planCodes.map(String).filter(Boolean) : [];
 
-  const addon = await db.addonCatalog.create({
-    data: {
-      key: finalKey,
-      name,
-      description: String(body.description ?? "").slice(0, 500),
-      category,
-      price,
-      oneOff: body.oneOff === true || (category === "service" && body.oneOff !== false),
-      grants: stringifyGrants(normalizeGrantsInput(body.grants)),
-      planCodes: JSON.stringify(planCodes),
-      badge: String(body.badge ?? "").slice(0, 30),
-      icon: String(body.icon ?? "puzzle").slice(0, 40),
-      sortOrder: Number.isFinite(Number(body.sortOrder)) ? Number(body.sortOrder) : 50,
-      active: body.active !== false,
-    },
-  });
+  let addon;
+  try {
+    addon = await db.addonCatalog.create({
+      data: {
+        key: finalKey,
+        name,
+        description: String(body.description ?? "").slice(0, 500),
+        category,
+        price,
+        oneOff: body.oneOff === true || (category === "service" && body.oneOff !== false),
+        grants: stringifyGrants(normalizeGrantsInput(body.grants)),
+        planCodes: JSON.stringify(planCodes),
+        badge: String(body.badge ?? "").slice(0, 30),
+        icon: String(body.icon ?? "puzzle").slice(0, 40),
+        sortOrder: Number.isFinite(Number(body.sortOrder)) ? Number(body.sortOrder) : 50,
+        active: body.active !== false,
+      },
+    });
+  } catch (err) {
+    const gap = schemaGapResponse(err);
+    if (gap) return NextResponse.json(gap.body, { status: gap.status });
+    throw err;
+  }
 
   await clearEntitlementsCache();
   await logPlatformAction({

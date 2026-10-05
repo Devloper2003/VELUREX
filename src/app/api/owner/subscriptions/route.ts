@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/auth";
+import { PLAN_CORE_SELECT } from "@/lib/plan-safe";
 import { demoScope, notDemoTenant } from "@/lib/owner-demo";
 
 /**
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
   const subs = await db.subscription.findMany({
     where,
     include: {
-      plan: true,
+      plan: { select: PLAN_CORE_SELECT },
       property: {
         include: {
           _count: { select: { rooms: true, staff: true } },

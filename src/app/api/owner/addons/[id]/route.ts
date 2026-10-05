@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/auth";
 import { clearEntitlementsCache } from "@/lib/entitlements";
+import { schemaGapResponse } from "@/lib/plan-safe";
 import { logPlatformAction } from "@/lib/platform";
 import { stringifyGrants } from "@/lib/feature-catalog";
 
@@ -26,7 +27,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const owner = auth.session;
   const { id } = await params;
 
-  const addon = await db.addonCatalog.findUnique({ where: { id } });
+  let addon;
+  try {
+    addon = await db.addonCatalog.findUnique({ where: { id } });
+  } catch (err) {
+    const gap = schemaGapResponse(err);
+    if (gap) return NextResponse.json(gap.body, { status: gap.status });
+    throw err;
+  }
   if (!addon) return NextResponse.json({ error: "Add-on not found" }, { status: 404 });
 
   const body = await req.json().catch(() => ({}));
@@ -50,7 +58,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (body.sortOrder !== undefined) data.sortOrder = Number(body.sortOrder);
   if (body.active !== undefined) data.active = Boolean(body.active);
 
-  const updated = await db.addonCatalog.update({ where: { id }, data });
+  let updated;
+  try {
+    updated = await db.addonCatalog.update({ where: { id }, data });
+  } catch (err) {
+    const gap = schemaGapResponse(err);
+    if (gap) return NextResponse.json(gap.body, { status: gap.status });
+    throw err;
+  }
 
   // Grants/price/active changes affect every holder → clear entitlements cache.
   await clearEntitlementsCache();
@@ -70,13 +85,26 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   const owner = auth.session;
   const { id } = await params;
 
-  const addon = await db.addonCatalog.findUnique({ where: { id } });
+  let addon;
+  try {
+    addon = await db.addonCatalog.findUnique({ where: { id } });
+  } catch (err) {
+    const gap = schemaGapResponse(err);
+    if (gap) return NextResponse.json(gap.body, { status: gap.status });
+    throw err;
+  }
   if (!addon) return NextResponse.json({ error: "Add-on not found" }, { status: 404 });
 
   const purchases = await db.subscriptionAddon.count({ where: { addonKey: addon.key } });
   if (purchases > 0) {
     // Soft-disable — keep entitlements + billing history consistent.
-    await db.addonCatalog.update({ where: { id }, data: { active: false } });
+    try {
+      await db.addonCatalog.update({ where: { id }, data: { active: false } });
+    } catch (err) {
+      const gap = schemaGapResponse(err);
+      if (gap) return NextResponse.json(gap.body, { status: gap.status });
+      throw err;
+    }
     await clearEntitlementsCache();
     await logPlatformAction({
       actorId: owner.sub, actorName: owner.email, action: "ADDON_DISABLED",
@@ -86,7 +114,13 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     return NextResponse.json({ ok: true, deactivated: true, purchases });
   }
 
-  await db.addonCatalog.delete({ where: { id } });
+  try {
+    await db.addonCatalog.delete({ where: { id } });
+  } catch (err) {
+    const gap = schemaGapResponse(err);
+    if (gap) return NextResponse.json(gap.body, { status: gap.status });
+    throw err;
+  }
   await clearEntitlementsCache();
   await logPlatformAction({
     actorId: owner.sub, actorName: owner.email, action: "ADDON_DELETED",

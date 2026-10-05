@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { PLAN_CORE_SELECT, isSchemaGapError } from "@/lib/plan-safe";
 
 /**
  * Central entitlements engine (PART 4 of the platform spec).
@@ -64,9 +65,11 @@ export async function getTenantEntitlements(propertyId: string): Promise<Entitle
   if (hit && Date.now() - hit.at < CACHE_TTL) return hit.value;
 
   const property = await db.property.findUnique({ where: { id: propertyId } });
+  // Core-column select only — works on pre- and post-v2.3.0 schemas alike
+  // (Plan.tagline/badge are marketing extras the entitlements engine ignores).
   const subscription = await db.subscription.findUnique({
     where: { propertyId },
-    include: { plan: true },
+    include: { plan: { select: PLAN_CORE_SELECT } },
   });
 
   const planFeatures = subscription?.plan?.features
@@ -87,9 +90,16 @@ export async function getTenantEntitlements(propertyId: string): Promise<Entitle
   //    AddonCatalog (grants JSON); legacy hard-coded quantities kept as
   //    fallback for rows created before the catalog existed.
   const addonKeys = [...new Set(addons.map((a) => a.addonKey))];
-  const catalogRows = addonKeys.length
-    ? await db.addonCatalog.findMany({ where: { key: { in: addonKeys } } })
-    : [];
+  // Degrade gracefully when the AddonCatalog table is not provisioned yet
+  // (pre-v2.3.0 database) — legacy quantities below keep old add-ons working.
+  let catalogRows: Awaited<ReturnType<typeof db.addonCatalog.findMany>> = [];
+  if (addonKeys.length) {
+    try {
+      catalogRows = await db.addonCatalog.findMany({ where: { key: { in: addonKeys } } });
+    } catch (err) {
+      if (!isSchemaGapError(err)) throw err;
+    }
+  }
   const catalogMap = new Map(catalogRows.map((c) => [c.key, c]));
   const LEGACY_QUANTITIES: Record<string, number> = {
     rooms_pack: 10, staff_pack: 5, whatsapp_pack: 100, ota_pack: 1,

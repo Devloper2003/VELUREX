@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/auth";
+import { PLAN_CORE_SELECT, findPlansSafe } from "@/lib/plan-safe";
 import { cyclePrice } from "@/lib/platform";
 import { demoScope, notDemoTenant, notDemoTenantId } from "@/lib/owner-demo";
 
@@ -16,9 +17,9 @@ export async function GET(req: NextRequest) {
 
   const now = new Date();
   const [subs, cancelled, plans, payments, usage, tenants] = await Promise.all([
-    db.subscription.findMany({ where: notDemoTenant(scope), include: { plan: true, property: { select: { id: true, city: true, state: true, deletedAt: true } } } }),
+    db.subscription.findMany({ where: notDemoTenant(scope), include: { plan: { select: PLAN_CORE_SELECT }, property: { select: { id: true, city: true, state: true, deletedAt: true } } } }),
     db.subscription.findMany({ where: { status: "cancelled", ...notDemoTenant(scope) } }),
-    db.plan.findMany({ orderBy: { sortOrder: "asc" } }),
+    findPlansSafe(),
     db.platformPayment.findMany({ where: { kind: "payment", status: "success", ...notDemoTenant(scope) } }),
     db.usageMetric.findMany({ where: notDemoTenant(scope), orderBy: { date: "desc" }, take: 200 }),
     db.property.findMany({ where: { deletedAt: null, ...notDemoTenantId(scope) }, select: { id: true, city: true, state: true } }),

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { clearEntitlementsCache } from "@/lib/entitlements";
 import { getPlatformSettingNumber, nextInvoiceNumber, platformGstRate, logPlatformAction, cyclePrice } from "@/lib/platform";
+import { PLAN_CORE_SELECT, findPlanSafe } from "@/lib/plan-safe";
 
 /**
  * Daily platform jobs (run by instrumentation scheduler + the manual trigger):
@@ -27,7 +28,10 @@ export async function runDailyJobs(): Promise<{ ran: string[]; skipped: string[]
 
   const subs = await db.subscription.findMany({
     where: { status: { not: "cancelled" } },
-    include: { plan: true, property: { include: { _count: { select: { rooms: true, staff: true } } } } },
+    include: {
+      plan: { select: PLAN_CORE_SELECT },
+      property: { include: { _count: { select: { rooms: true, staff: true } } } },
+    },
   });
 
   let reminders = 0, renewals = 0, overdueMarked = 0, suspended = 0, cancelled = 0;
@@ -127,7 +131,7 @@ export async function runDailyJobs(): Promise<{ ran: string[]; skipped: string[]
 
     // ── 4. Scheduled downgrades at renewal
     if (sub.pendingPlanId && sub.renewalAt && sub.renewalAt <= now) {
-      const plan = await db.plan.findUnique({ where: { id: sub.pendingPlanId } });
+      const plan = await findPlanSafe(sub.pendingPlanId);
       if (plan) {
         await db.subscription.update({ where: { id: sub.id }, data: { planId: plan.id, pendingPlanId: null } });
         await db.property.update({ where: { id: sub.propertyId }, data: { currentPlanId: plan.id } });

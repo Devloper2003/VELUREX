@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { getTenantEntitlements } from "@/lib/entitlements";
+import { findPlansSafe, findCatalogSafe } from "@/lib/plan-safe";
 
 /**
  * GET /api/subscription — tenant-side "My Subscription": current plan, usage
@@ -15,7 +16,7 @@ export async function GET(req: NextRequest) {
 
   const ent = await getTenantEntitlements(propertyId);
   const [plans, invoices, roomCount, staffCount, channelCount, waThisMonth, addons, catalog] = await Promise.all([
-    db.plan.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" } }),
+    findPlansSafe({ active: true }),
     db.invoice.findMany({
       where: { propertyId },
       orderBy: { createdAt: "desc" },
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
       where: { propertyId, createdAt: { gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) } },
     }),
     db.subscriptionAddon.findMany({ where: { propertyId, active: true } }),
-    db.addonCatalog.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" } }),
+    findCatalogSafe({ active: true }),
   ]);
 
   return NextResponse.json({

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/auth";
 import { clearEntitlementsCache } from "@/lib/entitlements";
+import { PLAN_CORE_SELECT, findPlanSafe, isSchemaGapError } from "@/lib/plan-safe";
 import { logPlatformAction } from "@/lib/platform";
 
 type Params = { params: Promise<{ id: string }> };
@@ -13,7 +14,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const owner = auth.session;
   const { id } = await params;
 
-  const plan = await db.plan.findUnique({ where: { id } });
+  const plan = await findPlanSafe(id);
   if (!plan) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
 
   const body = await req.json().catch(() => ({}));
@@ -32,7 +33,17 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (body.sortOrder !== undefined) data.sortOrder = Number(body.sortOrder);
   if (body.active !== undefined) data.active = Boolean(body.active);
 
-  const updated = await db.plan.update({ where: { id }, data });
+  // Explicit core select on the fallback keeps the Prisma read-back safe on
+  // pre-v2.3.0 databases (no tagline/badge columns to read). tagline/badge
+  // edits are silently skipped there — core fields still apply.
+  let updated;
+  try {
+    updated = await db.plan.update({ where: { id }, data });
+  } catch (err) {
+    if (!isSchemaGapError(err)) throw err;
+    const { tagline: _t, badge: _b, ...core } = data as Record<string, unknown>;
+    updated = await db.plan.update({ where: { id }, data: core, select: PLAN_CORE_SELECT });
+  }
 
   // Price/feature changes affect every subscriber → clear the entitlements cache.
   await clearEntitlementsCache();

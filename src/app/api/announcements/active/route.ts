@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
+import { PLAN_CORE_SELECT } from "@/lib/plan-safe";
 
 /**
  * GET  /api/announcements/active — in-app banner announcements visible to this tenant.
@@ -15,7 +16,7 @@ export async function GET(req: NextRequest) {
   const [property, reads] = await Promise.all([
     db.property.findUnique({
       where: { id: propertyId },
-      include: { subscription: { include: { plan: true } } },
+      include: { subscription: { include: { plan: { select: PLAN_CORE_SELECT } } } },
     }),
     db.announcementRead.findMany({ where: { propertyId }, select: { announcementId: true } }),
   ]);

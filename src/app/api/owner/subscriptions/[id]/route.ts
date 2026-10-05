@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/auth";
+import { PLAN_CORE_SELECT, findPlanSafe } from "@/lib/plan-safe";
 import { clearEntitlementsCache } from "@/lib/entitlements";
 import { logPlatformAction, nextInvoiceNumber, platformGstRate, cyclePrice } from "@/lib/platform";
 
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   const sub = await db.subscription.findUnique({
     where: { id },
     include: {
-      plan: true,
+      plan: { select: PLAN_CORE_SELECT },
       property: { include: { _count: { select: { rooms: true, staff: true } } } },
     },
   });
@@ -54,7 +55,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   const sub = await db.subscription.findUnique({
     where: { id },
-    include: { plan: true, property: true },
+    include: { plan: { select: PLAN_CORE_SELECT }, property: true },
   });
   if (!sub) return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
 
@@ -71,7 +72,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     case "downgrade": {
       const planId = String(body.planId ?? "");
       const cycle = ["monthly", "quarterly", "yearly"].includes(body.cycle) ? body.cycle : sub.cycle;
-      const plan = await db.plan.findUnique({ where: { id: planId } });
+      const plan = await findPlanSafe(planId);
       if (!plan) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
 
       const isUpgrade = plan.monthlyPrice >= sub.plan.monthlyPrice;
@@ -171,7 +172,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     case "apply_pending_plan": {
       if (!sub.pendingPlanId) return NextResponse.json({ error: "No pending plan change" }, { status: 400 });
-      const plan = await db.plan.findUnique({ where: { id: sub.pendingPlanId } });
+      const plan = await findPlanSafe(sub.pendingPlanId);
       if (!plan) return NextResponse.json({ error: "Pending plan not found" }, { status: 404 });
       await db.subscription.update({ where: { id }, data: { planId: plan.id, pendingPlanId: null } });
       await db.property.update({ where: { id: sub.propertyId }, data: { currentPlanId: plan.id } });

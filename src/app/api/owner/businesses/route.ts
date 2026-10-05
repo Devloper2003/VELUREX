@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/auth";
+import { PLAN_CORE_SELECT, findPlanSafe } from "@/lib/plan-safe";
 import { hashPassword, generateTempPassword } from "@/lib/password";
 import { logPlatformAction, setPlatformSetting, getPlatformSetting, getPlatformSettingNumber, nextInvoiceNumber, platformGstRate } from "@/lib/platform";
 import { demoScope, notDemoTenantId, notDemoTenant } from "@/lib/owner-demo";
@@ -43,7 +44,7 @@ export async function GET(req: NextRequest) {
     db.property.findMany({
       where,
       include: {
-        subscription: { include: { plan: true } },
+        subscription: { include: { plan: { select: PLAN_CORE_SELECT } } },
         staff: { where: { role: "hotel_admin" }, select: { id: true, name: true, email: true, active: true } },
       },
       orderBy: { createdAt: "asc" },
@@ -133,7 +134,7 @@ export async function POST(req: NextRequest) {
   if (existingStaff || existingOwner)
     return NextResponse.json({ error: "A user with this email already exists" }, { status: 409 });
 
-  const plan = await db.plan.findUnique({ where: { id: planId } });
+  const plan = await findPlanSafe(planId);
   if (!plan) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
 
   const trialDaysEffective = trialDays ?? (await getPlatformSettingNumber("default_trial_days", 14));

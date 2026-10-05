@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { clearEntitlementsCache } from "@/lib/entitlements";
+import { findPlanSafe, PLAN_CORE_SELECT, findCatalogByKeySafe } from "@/lib/plan-safe";
 import { nextInvoiceNumber, platformGstRate, cyclePrice, logPlatformAction } from "@/lib/platform";
 
 /**
@@ -18,14 +19,17 @@ export async function POST(req: NextRequest) {
   const propertyId = session.propertyId;
   if (!propertyId) return NextResponse.json({ error: "No tenant context" }, { status: 400 });
 
-  const sub = await db.subscription.findUnique({ where: { propertyId }, include: { plan: true, property: true } });
+  const sub = await db.subscription.findUnique({
+    where: { propertyId },
+    include: { plan: { select: PLAN_CORE_SELECT }, property: true },
+  });
   if (!sub) return NextResponse.json({ error: "No subscription found" }, { status: 404 });
 
   const body = await req.json().catch(() => ({}));
   const action = String(body.action ?? "");
 
   if (action === "upgrade") {
-    const plan = await db.plan.findUnique({ where: { id: String(body.planId ?? "") } });
+    const plan = await findPlanSafe(String(body.planId ?? ""));
     if (!plan) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
     if (plan.monthlyPrice <= sub.plan.monthlyPrice)
       return NextResponse.json({ error: "Use a higher-tier plan to upgrade" }, { status: 400 });
@@ -65,7 +69,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === "request_downgrade") {
-    const plan = await db.plan.findUnique({ where: { id: String(body.planId ?? "") } });
+    const plan = await findPlanSafe(String(body.planId ?? ""));
     if (!plan) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
     await db.subscription.update({ where: { id: sub.id }, data: { pendingPlanId: plan.id } });
     await logPlatformAction({
@@ -77,7 +81,12 @@ export async function POST(req: NextRequest) {
 
   if (action === "buy_addon") {
     const addonKey = String(body.addonKey ?? "").trim();
-    const item = await db.addonCatalog.findUnique({ where: { key: addonKey } });
+    const { row: item, schemaGap } = await findCatalogByKeySafe(addonKey);
+    if (schemaGap)
+      return NextResponse.json(
+        { error: "Add-ons are not provisioned on this database yet — please try again after the platform update.", code: "SCHEMA_NOT_MIGRATED" },
+        { status: 503 }
+      );
     if (!item || item.active === false)
       return NextResponse.json({ error: "This add-on is not available" }, { status: 404 });
 

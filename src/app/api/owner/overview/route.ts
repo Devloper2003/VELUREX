@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/auth";
+import { PLAN_CORE_SELECT, findPlansSafe } from "@/lib/plan-safe";
 import { cyclePrice } from "@/lib/platform";
 import { demoScope, notDemoTenant, notDemoTenantId } from "@/lib/owner-demo";
 
@@ -37,8 +38,8 @@ export async function GET(req: NextRequest) {
     db.subscription.count({ where: { status: "trial", ...notDemoTenant(scope) } }),
     db.subscription.count({ where: { status: "suspended", ...notDemoTenant(scope) } }),
     db.subscription.count({ where: { status: "overdue", ...notDemoTenant(scope) } }),
-    db.plan.findMany({ orderBy: { sortOrder: "asc" } }),
-    db.subscription.findMany({ where: notDemoTenant(scope), include: { plan: true, property: { select: { name: true, deletedAt: true } } } }),
+    findPlansSafe(),
+    db.subscription.findMany({ where: notDemoTenant(scope), include: { plan: { select: PLAN_CORE_SELECT }, property: { select: { name: true, deletedAt: true } } } }),
     db.platformPayment.findMany({ where: { status: "success", kind: "payment", ...notDemoTenant(scope) } }),
     db.property.count({ where: { deletedAt: null, createdAt: { gte: monthStart }, ...notDemoTenantId(scope) } }),
     db.subscription.findMany({

@@ -12,6 +12,17 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.3.1] — 2026-10-05 · Resilience Patch
+
+### Fixed — production 500s on pre-v2.3.0 databases
+- **Root cause**: v2.3.0 added `Plan.tagline` / `Plan.badge` columns and the `AddonCatalog` table as an additive migration, but production databases that have not applied `prisma/manual-migrations/v2.3.0_subscription_redesign.sql` yet made every full-column Plan read (and any AddonCatalog read) throw Prisma P2021/P2022. Because the entitlements engine is used by nearly every guarded route, this surfaced as 500s across Channels & OTAs ("Could not load channels"), My Subscription ("Unexpected end of JSON input" — non-JSON error body) and the entire owner console.
+- **Schema-resilient reads** (`src/lib/plan-safe.ts`): hot paths (entitlements, guards, cron) now select only the core Plan columns that exist in every schema version; marketing columns and the add-on catalogue are read through helpers that degrade gracefully (`""` / `[]`) on older schemas and return real data automatically once the migration is applied. A per-process memo stops repeated doomed queries from re-running (one attempt, then the resilient path; self-heals after restart/migration).
+- **Graceful writes**: owner plan create/update retries with core columns (tagline/badge edits are skipped harmlessly on old schemas); add-on catalogue reads/writes return honest 503 JSON (`SCHEMA_NOT_MIGRATED`) instead of crashing; tenant `buy_addon` reports the same clear message.
+- **Zero data touched**: the patch is read/write resilient on both pre- and post-v2.3.0 schemas — no existing plans, subscriptions, invoices, add-on purchases or overrides are modified, and no destructive SQL is introduced. Security middleware (rate limits, CSRF guard, proxy headers, AES-256-GCM secrets) is untouched; no data was hard-coded into source.
+- **Verification**: old-schema simulation on a live database (rename-based rollback of tagline/badge + AddonCatalog) confirmed every entitlements call, plan read and catalog read degrades gracefully with legacy add-on fallbacks intact, then restores with zero data loss; full browser QA (owner console, impersonation, tenant My Subscription + Channels) passed with zero console errors.
+
+---
+
 ## [2.3.0] — 2026-10-05 · Pricing Studio
 
 ### Added — subscription model redesign (4 tiers + add-ons marketplace)

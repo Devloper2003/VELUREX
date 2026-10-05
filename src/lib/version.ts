@@ -11,9 +11,9 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.3.0";
+export const APP_VERSION = "2.3.1";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Pricing Studio";
+export const APP_RELEASE_CODENAME = "Resilience Patch";
 export const APP_RELEASE_DATE = "2026-10-05";
 
 export type ReleaseNote = {
@@ -25,6 +25,16 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.3.1",
+    date: "2026-10-05",
+    codename: "Resilience Patch",
+    highlights: [
+      "Fixed: production 500s on Channels & OTAs, My Subscription and the owner console when the database has not received the v2.3.0 migration yet — every plan/add-on read now degrades gracefully and self-heals once the migration is applied",
+      "Fixed: API errors could return non-JSON bodies (\"Unexpected end of JSON input\") — add-on marketplace and self-service actions now return clear JSON messages instead of crashing",
+      "Zero data touched: the fix is read/write resilient on both pre- and post-v2.3.0 schemas; no existing plans, subscriptions, invoices or add-on purchases are modified",
+    ],
+  },
   {
     version: "2.3.0",
     date: "2026-10-05",
