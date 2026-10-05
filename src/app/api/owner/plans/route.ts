@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireOwner } from "@/lib/auth";
+import { clearEntitlementsCache } from "@/lib/entitlements";
 import { logPlatformAction } from "@/lib/platform";
 
 /** GET /api/owner/plans — all plans (active + inactive) with subscriber counts. */
@@ -21,6 +22,7 @@ export async function GET(req: NextRequest) {
       try { features = JSON.parse(p.features); } catch { /* keep {} */ }
       return {
         id: p.id, code: p.code, name: p.name, description: p.description,
+        tagline: p.tagline, badge: p.badge,
         monthlyPrice: p.monthlyPrice, features, sortOrder: p.sortOrder, active: p.active,
         subscribers: p.subscriptions.filter(
           (s) => ["active", "trial", "overdue"].includes(s.status) && !s.property?.deletedAt
@@ -51,13 +53,17 @@ export async function POST(req: NextRequest) {
     data: {
       code,
       name,
-      description: String(body.description ?? ""),
+      description: String(body.description ?? "").slice(0, 500),
+      tagline: String(body.tagline ?? "").slice(0, 160),
+      badge: String(body.badge ?? "").slice(0, 30),
       monthlyPrice: Math.max(0, Number(body.monthlyPrice ?? 0)),
       features: JSON.stringify(body.features ?? {}),
       sortOrder: Number(body.sortOrder ?? 99),
       active: body.active !== false,
     },
   });
+
+  await clearEntitlementsCache();
 
   await logPlatformAction({
     actorId: owner.sub, actorName: owner.email, action: "PLAN_CREATED",

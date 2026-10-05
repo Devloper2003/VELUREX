@@ -76,36 +76,57 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === "buy_addon") {
-    const catalog: Record<string, { label: string; price: number; oneOff: boolean }> = {
-      rooms_pack: { label: "Extra Rooms Pack (+10 rooms)", price: 999, oneOff: false },
-      staff_pack: { label: "Extra Staff Pack (+5 seats)", price: 499, oneOff: false },
-      whatsapp_pack: { label: "WhatsApp Pack (+100 msgs/mo)", price: 499, oneOff: false },
-      ota_pack: { label: "Extra OTA Channel", price: 799, oneOff: false },
-    };
-    const addonKey = String(body.addonKey ?? "");
-    const item = catalog[addonKey];
-    if (!item) return NextResponse.json({ error: "Unknown add-on" }, { status: 400 });
+    const addonKey = String(body.addonKey ?? "").trim();
+    const item = await db.addonCatalog.findUnique({ where: { key: addonKey } });
+    if (!item || item.active === false)
+      return NextResponse.json({ error: "This add-on is not available" }, { status: 404 });
+
+    // plan applicability — empty planCodes = valid on all plans
+    let applies = true;
+    try {
+      const codes = JSON.parse(item.planCodes) as string[];
+      if (Array.isArray(codes) && codes.length > 0 && !codes.includes(sub.plan.code)) applies = false;
+    } catch { /* default: applies */ }
+    if (!applies)
+      return NextResponse.json({ error: `${item.name} is not available on the ${sub.plan.name} plan` }, { status: 400 });
+
+    // capacity packs can stack; feature unlocks are single-purchase
+    const stackable = item.category === "capacity" || item.category === "service";
+    const existing = await db.subscriptionAddon.findFirst({
+      where: { propertyId, addonKey: item.key, active: true },
+    });
+    if (existing && !stackable)
+      return NextResponse.json({ error: `${item.name} is already active on your subscription` }, { status: 409 });
+    if (item.oneOff && existing)
+      return NextResponse.json({ error: `${item.name} has already been purchased` }, { status: 409 });
 
     const gst = await platformGstRate();
     const tax = Math.round(item.price * (gst / 100) * 100) / 100;
     const number = await nextInvoiceNumber();
     const inv = await db.invoice.create({
       data: {
-        number, propertyId, subscriptionId: sub.id, type: "addon", status: "pending",
+        number, propertyId, subscriptionId: sub.id, type: item.oneOff ? "setup" : "addon", status: "pending",
         subtotal: item.price, taxAmount: tax, totalAmount: Math.round((item.price + tax) * 100) / 100,
         dueDate: new Date(Date.now() + 7 * 86400000),
       },
     });
     await db.invoiceItem.create({
-      data: { invoiceId: inv.id, description: item.label, qty: 1, unitPrice: item.price, taxRate: gst, amount: item.price },
+      data: { invoiceId: inv.id, description: item.name + (stackable && !item.oneOff ? " (monthly)" : ""), qty: 1, unitPrice: item.price, taxRate: gst, amount: item.price },
     });
-    await db.subscriptionAddon.create({
-      data: { propertyId, addonKey, label: item.label, qty: 1, price: item.price, oneOff: item.oneOff },
-    });
+    if (existing && stackable) {
+      await db.subscriptionAddon.update({
+        where: { id: existing.id },
+        data: { qty: existing.qty + 1, price: existing.price + item.price, label: item.name },
+      });
+    } else {
+      await db.subscriptionAddon.create({
+        data: { propertyId, addonKey: item.key, label: item.name, qty: 1, price: item.price, oneOff: item.oneOff },
+      });
+    }
     await clearEntitlementsCache(propertyId);
     await logPlatformAction({
       actorName: session.email, action: "SELF_SERVE_ADDON", entity: "subscription", entityId: sub.id,
-      propertyId, details: `${sub.property.name}: bought ${item.label} — invoice ${number}`,
+      propertyId, details: `${sub.property.name}: bought ${item.name} — invoice ${number}`,
     });
     return NextResponse.json({ ok: true, invoiceNumber: number, invoiceId: inv.id });
   }

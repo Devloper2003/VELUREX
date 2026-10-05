@@ -406,6 +406,7 @@ const VIEW_LABELS: Record<OwnerViewKey, string> = {
   users: "Users",
   onboarding: "Onboarding",
   subscriptions: "Subscriptions",
+  addons: "Add-ons Catalog",
   billing: "Billing",
   coupons: "Coupons",
   tickets: "Support Tickets",

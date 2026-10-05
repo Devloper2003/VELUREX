@@ -11,10 +11,10 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.2.0";
+export const APP_VERSION = "2.3.0";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "WhatsApp Studio";
-export const APP_RELEASE_DATE = "2026-10-04";
+export const APP_RELEASE_CODENAME = "Pricing Studio";
+export const APP_RELEASE_DATE = "2026-10-05";
 
 export type ReleaseNote = {
   version: string;
@@ -25,6 +25,19 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.3.0",
+    date: "2026-10-05",
+    codename: "Pricing Studio",
+    highlights: [
+      "Four-tier subscription model — Starter ₹1,999 · Basic ₹4,999 · Pro ₹9,999 · Enterprise ₹19,999 with a full feature comparison table",
+      "Add-ons marketplace — 15 owner-managed add-ons (feature unlocks, capacity packs, services) with highlight badges like Best Seller & Revenue Booster",
+      "Owner console: Add-ons Catalog view — create/edit/deactivate add-ons, set what they grant, pricing, plan availability and badges; changes apply live to every subscriber",
+      "Plan editor upgraded — tagline, marketing badge and the full feature matrix now editable from Subscriptions → Manage plans",
+      "Fixed: tenant self-service actions (upgrade / downgrade / buy add-on / pay now) returned 405 and never worked — now fully functional with prorated invoices",
+      "Fixed: add-on purchases and entitlement caps now apply instantly (rooms 10 → 20 after one pack in QA)",
+    ],
+  },
   {
     version: "2.2.0",
     date: "2026-10-04",

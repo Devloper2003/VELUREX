@@ -12,6 +12,32 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.3.0] — 2026-10-05 · Pricing Studio
+
+### Added — subscription model redesign (4 tiers + add-ons marketplace)
+- **Four-tier plans** replace the three-tier model: **Starter ₹1,999** (10 rooms / 3 staff / 1 OTA / 50 WA msgs — guesthouses & small B&Bs), **Basic ₹4,999** (25 rooms / 10 staff / 3 OTA / 200 WA msgs + Restaurant POS + Excel export), **Pro ₹9,999** (75 rooms / 30 staff / 3 properties / 6 OTA / 1000 WA msgs + Night Audit + WhatsApp Automation + Advanced Reports + Multi-property — badge *Most Popular*), **Enterprise ₹19,999** (unlimited rooms/staff/properties/OTA, 5000 WA msgs + Dynamic Pricing + API & Webhooks + White-label — badge *Best Value*).
+- **Add-on catalog** (`AddonCatalog` table): 15 seeded add-ons in three categories — *Feature unlocks* (Restaurant POS, Night Audit, WhatsApp Automation Suite, Dynamic Pricing Engine, Advanced Reports, Excel Export, API & Webhooks, White-label, Priority Support), *Capacity packs* (Extra Rooms +10, Extra Staff Seats +5, WhatsApp Messages +500, Extra OTA Channel, Extra Property) and *Services* (Assisted Onboarding one-off). Each carries a `grants` JSON (feature flags / limit boosts / support tiers), plan availability, marketing badge and icon; capacity packs stack, feature unlocks are single-purchase.
+- **Owner console → Add-ons Catalog** (new Revenue nav item): full CRUD with a live grants editor (per-feature toggles, limit boosts, support-tier picker), plan-applicability chips, badge/icon/price/sort controls, purchase counters and safe delete (deactivates when holders exist; hard delete only when never purchased). Every mutation is audit-logged and clears the entitlements cache.
+- **Plan editor upgraded** (Subscriptions → Manage plans): tagline + marketing badge fields on create & edit, richer feature template (16 keys from the shared catalog), plan cards show badge & tagline.
+- **Tenant Billing → My Subscription redesigned**: 4 plan cards with badges/taglines/premium feature highlights, "Compare all features" table (16 rows), add-ons grouped by category with "In your plan" / "Active" / "Add more" states, and owned-add-on chips on the current-plan card.
+- `src/lib/feature-catalog.ts` — single source of truth for feature keys (16 features: 5 limits, 9 module flags, support & backup tiers) shared by the owner editors and the pricing UI; `AddonCatalog.grants` merged into effective entitlements between plan features and per-tenant overrides (legacy pre-catalog add-on rows keep working).
+- `GET /api/subscription` now returns `catalog` + `ownedAddons`; `buy_addon` validates against the owner-managed catalog (plan applicability, duplicate protection, stackable quantity) and prices come server-side only.
+- `POST/PATCH /api/owner/plans` accept `tagline`/`badge`; new `GET/POST /api/owner/addons` + `PATCH/DELETE /api/owner/addons/[id]` (requireOwner-guarded, audit-logged, input-validated).
+- `Plan.tagline` / `Plan.badge` columns; manual migration SQL shipped at `prisma/manual-migrations/v2.1.0_subscription_redesign.sql` + `prisma/seed-live.ts` seeds the four plans & the catalog idempotently.
+
+### Fixed — errors found in full-app QA
+- **Tenant self-service actions were completely broken in production**: the subscription view POSTed to `GET`-only `/api/subscription` → 405 on every upgrade / downgrade / add-on purchase / pay-now. Actions now target `/api/subscription/actions`.
+- **Radix Select crash**: badge pickers fed empty-string item values → client-side exception blew up the Add-ons editor and plan dialogs; empty badge now uses a `none` sentinel.
+- **Add-on grants double-serialization**: the owner API re-serialized an already-JSON grants string, silently saving `{}` — grants never persisted from the editor; now normalized on both create and update.
+- **Subscription view dead-ended on refresh**: the view refused to load without the in-memory JWT even though the HttpOnly session cookie was valid; Bearer header is now optional and cookie auth carries refreshes (pattern aligned with the rest of the app).
+
+### Security review (this release)
+- New owner routes are `requireOwner`-guarded with platform-role write-matrix support (`addons` added for platform_admin/platform_finance), CSRF-guarded, audit-logged, with key regex validation, price clamping, category whitelist and string-length caps.
+- Add-on purchase pricing is resolved server-side from the catalog row (body price never trusted); plan applicability and duplicate/stack rules enforced server-side; `propertyId` always derived from the session (no IDOR surface).
+- All DB access parameterized via Prisma; no raw SQL on user input; no secrets in client bundles.
+
+---
+
 ## [2.2.0] — 2026-10-04 · WhatsApp Studio
 
 ### Added — WhatsApp tab upgrades (req ⑦ parity)

@@ -7,7 +7,7 @@ import {
   LayoutDashboard, BarChart3, Building2, UserPlus, Users, Route,
   CreditCard, ReceiptIndianRupee, TicketPercent, LifeBuoy, Megaphone,
   ScrollText, Network, Settings2, Activity, UserCog, LogOut, Menu, X,
-  ChevronDown, ShieldCheck, Search, Command, CornerDownLeft, FlaskConical,
+  ChevronDown, ShieldCheck, Search, Command, CornerDownLeft, FlaskConical, Puzzle,
 } from "lucide-react";
 import { useSession } from "@/lib/store";
 import { useOwner, type OwnerViewKey } from "@/lib/owner-store";
@@ -27,6 +27,7 @@ import OwnerAddBusinessView from "./views/AddBusinessView";
 import OwnerUsersView from "./views/UsersView";
 import OwnerOnboardingView from "./views/OnboardingView";
 import OwnerSubscriptionsView from "./views/SubscriptionsView";
+import OwnerAddonsCatalogView from "./views/AddonsCatalogView";
 import OwnerBillingView from "./views/BillingView";
 import OwnerCouponsView from "./views/CouponsView";
 import OwnerTicketsView from "./views/TicketsView";
@@ -45,6 +46,7 @@ const VIEW_TITLES: Record<OwnerViewKey, { title: string; sub: string }> = {
   users: { title: "Users", sub: "All staff accounts across businesses" },
   onboarding: { title: "Onboarding", sub: "Leads pipeline & activation checklists" },
   subscriptions: { title: "Subscriptions", sub: "Plans, renewals, add-ons & overrides" },
+  addons: { title: "Add-ons Catalog", sub: "Sellable feature unlocks, capacity packs & services" },
   billing: { title: "Billing & Invoices", sub: "GST invoices, payments & revenue export" },
   coupons: { title: "Coupons & Offers", sub: "Discount and trial-extension codes" },
   tickets: { title: "Support Tickets", sub: "Tenant issues, replies & internal notes" },
@@ -77,6 +79,7 @@ const NAV: { group: string; items: { key: OwnerViewKey; label: string; icon: Rea
     group: "Revenue",
     items: [
       { key: "subscriptions", label: "Subscriptions", icon: CreditCard },
+      { key: "addons", label: "Add-ons Catalog", icon: Puzzle },
       { key: "billing", label: "Billing & Invoices", icon: ReceiptIndianRupee },
       { key: "coupons", label: "Coupons & Offers", icon: TicketPercent },
     ],
@@ -108,6 +111,7 @@ const VIEW_COMPONENTS: Record<OwnerViewKey, React.ComponentType> = {
   users: OwnerUsersView,
   onboarding: OwnerOnboardingView,
   subscriptions: OwnerSubscriptionsView,
+  addons: OwnerAddonsCatalogView,
   billing: OwnerBillingView,
   coupons: OwnerCouponsView,
   tickets: OwnerTicketsView,

@@ -83,23 +83,59 @@ export async function getTenantEntitlements(propertyId: string): Promise<Entitle
     limits[k] = typeof v === "number" ? v : 0;
   }
 
-  // 2. add-ons raise the caps
+  // 2. add-ons raise the caps / unlock flags — driven by the owner-managed
+  //    AddonCatalog (grants JSON); legacy hard-coded quantities kept as
+  //    fallback for rows created before the catalog existed.
+  const addonKeys = [...new Set(addons.map((a) => a.addonKey))];
+  const catalogRows = addonKeys.length
+    ? await db.addonCatalog.findMany({ where: { key: { in: addonKeys } } })
+    : [];
+  const catalogMap = new Map(catalogRows.map((c) => [c.key, c]));
+  const LEGACY_QUANTITIES: Record<string, number> = {
+    rooms_pack: 10, staff_pack: 5, whatsapp_pack: 100, ota_pack: 1,
+  };
+  const LEGACY_KEY_MAP: Record<string, string> = {
+    rooms_pack: "rooms", staff_pack: "staff", whatsapp_pack: "whatsapp_msgs", ota_pack: "ota_channels",
+  };
+
+  const planCode = subscription?.plan?.code ?? "";
   const addonList = addons.map((a) => ({
     addonKey: a.addonKey, label: a.label, qty: a.qty, price: a.price, oneOff: a.oneOff,
   }));
-  const addonMap: Record<string, number> = {
-    rooms_pack: 10, staff_pack: 5, whatsapp_pack: 100, ota_pack: 1,
-  };
+
   for (const a of addons) {
-    const per = addonMap[a.addonKey] ?? 0;
-    const key = a.addonKey.replace("_pack", "s").replace("otass", "ota_channels").replace("whatsapps", "whatsapp_msgs");
-    const mapped = a.addonKey === "rooms_pack" ? "rooms"
-      : a.addonKey === "staff_pack" ? "staff"
-      : a.addonKey === "whatsapp_pack" ? "whatsapp_msgs"
-      : a.addonKey === "ota_pack" ? "ota_channels" : null;
-    if (mapped && per > 0 && limits[mapped] !== -1) limits[mapped] += per * a.qty;
+    const cat = catalogMap.get(a.addonKey);
+    if (cat) {
+      // plan applicability — empty planCodes = valid on all plans
+      let applies = true;
+      try {
+        const codes = JSON.parse(cat.planCodes) as string[];
+        if (Array.isArray(codes) && codes.length > 0 && !codes.includes(planCode)) applies = false;
+      } catch { /* default: applies */ }
+      if (cat.active === false) applies = false;
+      if (!applies) continue;
+
+      let grants: Record<string, unknown> = {};
+      try { grants = JSON.parse(cat.grants) as Record<string, unknown>; } catch { grants = {}; }
+      for (const [gKey, gVal] of Object.entries(grants)) {
+        if (typeof gVal === "number") {
+          if (limits[gKey] !== -1) {
+            const base = typeof limits[gKey] === "number" ? limits[gKey] : 0;
+            limits[gKey] = base + gVal * Math.max(1, a.qty);
+          }
+        } else if (typeof gVal === "string") {
+          planFeatures[gKey] = gVal;
+        } else if (gVal === true) {
+          planFeatures[gKey] = true;
+        }
+      }
+    } else {
+      // legacy fallback (pre-catalog rows)
+      const per = LEGACY_QUANTITIES[a.addonKey] ?? 0;
+      const mapped = LEGACY_KEY_MAP[a.addonKey] ?? null;
+      if (mapped && per > 0 && limits[mapped] !== -1) limits[mapped] += per * a.qty;
+    }
   }
-  void addonMap;
 
   // 3. per-tenant overrides (final say)
   const overrideList = overrides.map((o) => ({

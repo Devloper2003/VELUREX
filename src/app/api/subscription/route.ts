@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   if (!propertyId) return NextResponse.json({ error: "No tenant context" }, { status: 400 });
 
   const ent = await getTenantEntitlements(propertyId);
-  const [plans, invoices, roomCount, staffCount, channelCount, waThisMonth, addons] = await Promise.all([
+  const [plans, invoices, roomCount, staffCount, channelCount, waThisMonth, addons, catalog] = await Promise.all([
     db.plan.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" } }),
     db.invoice.findMany({
       where: { propertyId },
@@ -29,6 +29,7 @@ export async function GET(req: NextRequest) {
       where: { propertyId, createdAt: { gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) } },
     }),
     db.subscriptionAddon.findMany({ where: { propertyId, active: true } }),
+    db.addonCatalog.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" } }),
   ]);
 
   return NextResponse.json({
@@ -49,8 +50,21 @@ export async function GET(req: NextRequest) {
     plans: plans.map((p) => {
       let features: Record<string, unknown> = {};
       try { features = JSON.parse(p.features); } catch { /* noop */ }
-      return { id: p.id, code: p.code, name: p.name, description: p.description, monthlyPrice: p.monthlyPrice, features };
+      return {
+        id: p.id, code: p.code, name: p.name, description: p.description,
+        tagline: p.tagline, badge: p.badge, monthlyPrice: p.monthlyPrice, features,
+      };
     }),
+    catalog: catalog.map((c) => {
+      let planCodes: string[] = [];
+      try { planCodes = JSON.parse(c.planCodes) as string[]; } catch { planCodes = []; }
+      return {
+        key: c.key, name: c.name, description: c.description, category: c.category,
+        price: c.price, oneOff: c.oneOff, grants: c.grants, planCodes,
+        badge: c.badge, icon: c.icon, owned: addons.some((a) => a.addonKey === c.key),
+      };
+    }),
+    ownedAddons: addons.map((a) => ({ addonKey: a.addonKey, label: a.label, qty: a.qty, price: a.price, oneOff: a.oneOff, createdAt: a.createdAt })),
     invoices: invoices.map((i) => ({
       id: i.id, number: i.number, type: i.type, status: i.status,
       totalAmount: i.totalAmount, taxAmount: i.taxAmount, subtotal: i.subtotal,

@@ -19,8 +19,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const body = await req.json().catch(() => ({}));
 
   const data: Record<string, unknown> = {};
-  if (body.name !== undefined) data.name = String(body.name);
-  if (body.description !== undefined) data.description = String(body.description);
+  if (body.name !== undefined) {
+    const name = String(body.name).trim();
+    if (!name) return NextResponse.json({ error: "name cannot be empty" }, { status: 400 });
+    data.name = name;
+  }
+  if (body.description !== undefined) data.description = String(body.description).slice(0, 500);
+  if (body.tagline !== undefined) data.tagline = String(body.tagline).slice(0, 160);
+  if (body.badge !== undefined) data.badge = String(body.badge).slice(0, 30);
   if (body.monthlyPrice !== undefined) data.monthlyPrice = Math.max(0, Number(body.monthlyPrice));
   if (body.features !== undefined) data.features = JSON.stringify(body.features);
   if (body.sortOrder !== undefined) data.sortOrder = Number(body.sortOrder);

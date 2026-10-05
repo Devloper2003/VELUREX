@@ -283,10 +283,10 @@ export async function requireOwner(req: Request): Promise<{ session: Session } |
 
   const writable =
     role === "platform_admin"
-      ? ["businesses", "users", "onboarding", "subscriptions", "plans", "billing", "coupons", "tickets", "announcements", "integrations", "health", "cron"]
+      ? ["businesses", "users", "onboarding", "subscriptions", "plans", "addons", "billing", "coupons", "tickets", "announcements", "integrations", "health", "cron"]
       : role === "platform_support"
         ? ["tickets", "announcements"]
-        : ["subscriptions", "plans", "billing", "coupons"]; // platform_finance
+        : ["subscriptions", "plans", "addons", "billing", "coupons"]; // platform_finance
 
   if (!writable.includes(seg)) {
     return {

@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { defaultPlanFeatures, PLAN_BADGES } from "@/lib/feature-catalog";
 
 /* ─── types ──────────────────────────────────────────────────────────────── */
 
@@ -30,6 +31,8 @@ interface Plan {
   code: string;
   name: string;
   description: string | null;
+  tagline?: string | null;
+  badge?: string | null;
   monthlyPrice: number;
   features: Record<string, unknown>;
   sortOrder: number;
@@ -106,12 +109,7 @@ const OVERRIDE_SUGGESTIONS = ["pos", "night_audit", "whatsapp_automation", "dyna
 
 /** Starter feature template for brand-new plans (the editor always iterates the record). */
 function newPlanFeatures(): Record<string, unknown> {
-  return {
-    rooms: 20, staff: 5, properties: 1, ota_channels: 2, whatsapp_msgs: 0,
-    pos: false, night_audit: false, whatsapp_automation: false, dynamic_pricing: false,
-    advanced_reports: false, excel_export: false, api_access: false, white_label: false,
-    multi_property: false, support: "email", backup: "weekly",
-  };
+  return defaultPlanFeatures();
 }
 
 /* ─── local components ───────────────────────────────────────────────────── */
@@ -178,12 +176,17 @@ export default function SubscriptionsView() {
 
   // edit plan dialog
   const [editPlan, setEditPlan] = useState<Plan | null>(null);
-  const [planDraft, setPlanDraft] = useState<{ monthlyPrice: string; description: string; features: Record<string, unknown> } | null>(null);
+  const [planDraft, setPlanDraft] = useState<{
+    monthlyPrice: string; description: string; tagline: string; badge: string;
+    features: Record<string, unknown>;
+  } | null>(null);
   const [planBusy, setPlanBusy] = useState(false);
 
   // new plan dialog
   const [newPlanOpen, setNewPlanOpen] = useState(false);
-  const [np, setNp] = useState({ code: "", name: "", monthlyPrice: "4999", description: "", features: newPlanFeatures() });
+  const [np, setNp] = useState<{ code: string; name: string; monthlyPrice: string; description: string; tagline: string; badge: string; features: Record<string, unknown> }>({
+    code: "", name: "", monthlyPrice: "4999", description: "", tagline: "", badge: "", features: newPlanFeatures(),
+  });
   const [npBusy, setNpBusy] = useState(false);
 
   // change plan dialog
@@ -514,6 +517,8 @@ export default function SubscriptionsView() {
     setPlanDraft({
       monthlyPrice: String(p.monthlyPrice ?? 0),
       description: p.description ?? "",
+      tagline: p.tagline ?? "",
+      badge: p.badge ?? "",
       features: { ...(p.features ?? {}) },
     });
   }
@@ -527,6 +532,8 @@ export default function SubscriptionsView() {
         body: JSON.stringify({
           monthlyPrice: Math.max(0, Number(planDraft.monthlyPrice) || 0),
           description: planDraft.description,
+          tagline: planDraft.tagline,
+          badge: planDraft.badge,
           features: planDraft.features,
         }),
       });
@@ -551,13 +558,15 @@ export default function SubscriptionsView() {
           code: np.code.trim().toLowerCase(),
           name: np.name.trim(),
           description: np.description,
+          tagline: np.tagline,
+          badge: np.badge,
           monthlyPrice: Math.max(0, Number(np.monthlyPrice) || 0),
           features: np.features,
         }),
       });
       toast({ title: "Plan created", description: `${np.name} is live on the pricing table.` });
       setNewPlanOpen(false);
-      setNp({ code: "", name: "", monthlyPrice: "4999", description: "", features: newPlanFeatures() });
+      setNp({ code: "", name: "", monthlyPrice: "4999", description: "", tagline: "", badge: "", features: newPlanFeatures() });
       void loadPlans();
     } catch (e) {
       toastError(e, "Create failed");
@@ -642,7 +651,10 @@ export default function SubscriptionsView() {
                 <div key={p.id} className="panel flex flex-col p-4">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="font-display font-semibold text-pine">{p.name}</p>
+                      <p className="font-display font-semibold text-pine flex items-center gap-1.5">
+                        {p.name}
+                        {p.badge && <span className="badge border-brass/40 bg-brass/10 text-brass text-[9px]">{p.badge}</span>}
+                      </p>
                       <p className="text-[11px] uppercase tracking-wider text-muted-ink">{p.code}</p>
                     </div>
                     <span className={`badge ${p.active ? "border-ok/40 bg-ok/10 text-ok" : "border-line-strong bg-plaster text-muted-ink"}`}>
@@ -653,10 +665,12 @@ export default function SubscriptionsView() {
                     {inr(p.monthlyPrice)}
                     <span className="font-sans text-xs font-normal text-muted-ink">/mo</span>
                   </p>
-                  <p className="mt-1 text-xs text-muted-ink">
+                  {(p.tagline || p.description) && (
+                    <p className="mt-1 line-clamp-2 text-xs text-muted-ink">{p.tagline || p.description}</p>
+                  )}
+                  <p className="mt-2 text-xs text-muted-ink">
                     {p.subscribers} subscriber{p.subscribers === 1 ? "" : "s"}
                   </p>
-                  {p.description && <p className="mt-2 line-clamp-2 text-xs text-muted-ink">{p.description}</p>}
                   <div className="mt-3 border-t border-line pt-3">
                     <button className="btn-outline w-full" onClick={() => openEditPlan(p)}>
                       <Pencil className="h-3.5 w-3.5" /> Edit plan
@@ -862,6 +876,28 @@ export default function SubscriptionsView() {
                   onChange={(e) => setPlanDraft({ ...planDraft, description: e.target.value })}
                 />
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="field-label">Tagline</Label>
+                  <Input
+                    className="field"
+                    value={planDraft.tagline}
+                    onChange={(e) => setPlanDraft({ ...planDraft, tagline: e.target.value })}
+                    placeholder="Short line under the price"
+                  />
+                </div>
+                <div>
+                  <Label className="field-label">Badge</Label>
+                  <Select value={planDraft.badge || "none"} onValueChange={(v) => setPlanDraft({ ...planDraft, badge: v === "none" ? "" : v })}>
+                    <SelectTrigger className="field"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {PLAN_BADGES.map((b) => (
+                        <SelectItem key={b || "none"} value={b || "none"}>{b || "No badge"}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               <div>
                 <Label className="field-label">Features</Label>
                 <div className="max-h-72 overflow-y-auto scroll-slim rounded-md border border-line p-2">
@@ -917,6 +953,23 @@ export default function SubscriptionsView() {
             <div>
               <Label className="field-label">Description</Label>
               <Textarea rows={2} value={np.description} onChange={(e) => setNp({ ...np, description: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="field-label">Tagline</Label>
+                <Input className="field" value={np.tagline} onChange={(e) => setNp({ ...np, tagline: e.target.value })} placeholder="Short line under the price" />
+              </div>
+              <div>
+                <Label className="field-label">Badge</Label>
+                <Select value={np.badge || "none"} onValueChange={(v) => setNp({ ...np, badge: v === "none" ? "" : v })}>
+                  <SelectTrigger className="field"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {PLAN_BADGES.map((b) => (
+                      <SelectItem key={b || "none"} value={b || "none"}>{b || "No badge"}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div>
               <Label className="field-label">Features</Label>

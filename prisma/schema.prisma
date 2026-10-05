@@ -561,9 +561,11 @@ model ChannelSyncLog {
 
 model Plan {
   id             String   @id @default(cuid())
-  code           String   @unique // basic | pro | enterprise
+  code           String   @unique // starter | basic | pro | enterprise
   name           String
   description    String   @default("")
+  tagline        String   @default("") // short marketing line under the price
+  badge          String   @default("") // e.g. "Most Popular" | "Best Value" | "" = none
   monthlyPrice   Float    @default(0) // INR / month (list price)
   features       String   @default("{}") // JSON — limits + feature flags, single source of truth (never hard-coded)
   sortOrder      Int      @default(0)
@@ -572,6 +574,27 @@ model Plan {
   updatedAt      DateTime @updatedAt
 
   subscriptions Subscription[]
+}
+
+// Central add-ons catalogue — managed by the software owner from the platform
+// console. Tenants buy these from Billing → Add-ons; each purchase creates a
+// SubscriptionAddon row keyed by `key`.
+model AddonCatalog {
+  id          String   @id @default(cuid())
+  key         String   @unique // e.g. pos_pack, rooms_pack, api_access
+  name        String
+  description String   @default("")
+  category    String   @default("feature") // feature | capacity | service
+  price       Float    @default(0) // INR / month (or one-off when oneOff)
+  oneOff      Boolean  @default(false)
+  grants      String   @default("{}") // JSON — { featureFlag: true } or { limitKey: +N } merged into entitlements
+  planCodes   String   @default("[]") // JSON array of plan codes it applies to — empty array = all plans
+  badge       String   @default("") // "Best Seller" | "Most Popular" | "Best Value"
+  icon        String   @default("puzzle") // lucide icon name
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Subscription {
@@ -599,7 +622,7 @@ model Subscription {
 model SubscriptionAddon {
   id         String    @id @default(cuid())
   propertyId String
-  addonKey   String // rooms_pack | staff_pack | whatsapp_pack | ota_pack | setup_fee
+  addonKey   String // references AddonCatalog.key (legacy keys kept for compatibility)
   label      String
   qty        Int       @default(1)
   price      Float     @default(0) // monthly-equivalent (or one-off when oneOff)
