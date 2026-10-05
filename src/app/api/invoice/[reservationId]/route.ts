@@ -16,7 +16,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ rese
     where: { id: reservationId, propertyId },
     include: {
       property: {
-        select: { name: true, address: true, city: true, gstin: true, phone: true },
+        select: { name: true, address: true, city: true, state: true, gstin: true, phone: true, email: true },
       },
       guest: {
         select: { fullName: true, phone: true, email: true, address: true, city: true, idType: true, idNumber: true },

@@ -5,6 +5,18 @@ import { logActivity } from "@/lib/business";
 
 const METHODS = ["cash", "upi", "card"];
 
+/**
+ * A method outside the base list is accepted when it matches an ENABLED online
+ * payment gateway the software owner assigned to this property (e.g. "razorpay").
+ */
+async function isGatewayMethod(propertyId: string, method: string): Promise<boolean> {
+  const gw = await db.paymentGateway.findFirst({
+    where: { propertyId, enabled: true, provider: method },
+    select: { id: true },
+  });
+  return Boolean(gw);
+}
+
 const FULL_INCLUDE = {
   items: { include: { menuItem: true } },
   reservation: { include: { guest: true, room: true } },
@@ -31,8 +43,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   const method = typeof body?.method === "string" ? body.method : "";
-  if (!METHODS.includes(method)) {
-    return NextResponse.json({ error: "method must be cash, upi or card" }, { status: 400 });
+  if (!METHODS.includes(method) && !(await isGatewayMethod(propertyId, method))) {
+    return NextResponse.json({ error: "method must be cash, upi, card or an enabled gateway provider" }, { status: 400 });
   }
 
   const payment = await db.payment.create({

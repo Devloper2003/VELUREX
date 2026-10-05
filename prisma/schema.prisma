@@ -85,6 +85,7 @@ model Property {
   checklist          OnboardingChecklist?
   usageMetrics       UsageMetric[]
   whatsappConfig     WhatsAppConfig?
+  paymentGateways    PaymentGateway[]
 }
 
 model Staff {
@@ -1044,4 +1045,26 @@ model AssetUpload {
   property Property @relation(fields: [propertyId], references: [id])
 
   @@index([propertyId])
+}
+
+// ─── Payment gateways (assigned by the platform owner) ──────────────────────
+
+model PaymentGateway {
+  id         String   @id @default(cuid())
+  propertyId String
+  provider   String // razorpay | cashfree | payu | paytm | phonepe | stripe | upi_qr | bank_transfer | custom
+  label      String   @default("") // tenant-facing name, e.g. "Pay via Razorpay"
+  mode       String   @default("test") // test | live
+  enabled    Boolean  @default(true)
+  isDefault  Boolean  @default(false)
+  merchantId String   @default("") // key id / merchant id / UPI VPA — not secret
+  secret     String   @default("") // key secret / salt — encrypted at rest (AES-256-GCM)
+  notes      String   @default("") // platform-owner private notes
+  addedBy    String   @default("") // platform staff who configured it
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id])
+
+  @@index([propertyId, enabled])
 }

@@ -44,9 +44,11 @@ import {
   Plus,
   Printer,
   RefreshCw,
+  ReceiptText,
   Salad,
   Search,
   Send,
+  Eye,
   ShoppingBag,
   Smartphone,
   Trash2,
@@ -113,24 +115,13 @@ interface InhouseT {
   roomNumber: string;
 }
 
-interface KotItemT {
+/** Online payment gateway assigned to this property by the platform owner. */
+interface GatewayT {
   id: string;
-  name: string;
-  qty: number;
-  notes: string;
-  status: string;
-}
-
-interface KotOrderT {
-  id: string;
-  orderNumber: string;
-  orderType: string;
-  tableNumber: string;
-  roomNumber: string;
-  guestName: string;
-  createdAt: string;
-  elapsedMinutes: number;
-  items: KotItemT[];
+  provider: string;
+  label: string;
+  mode: string;
+  isDefault: boolean;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -189,6 +180,20 @@ const PAY_BADGE: Record<string, string> = {
 };
 
 const TYPE_LABEL: Record<string, string> = { dine_in: "Dine-in", room_service: "Room Svc", takeaway: "Takeaway" };
+
+/** Provider key → display label for payment gateways assigned by the platform owner. */
+const GATEWAY_LABELS: Record<string, string> = {
+  razorpay: "Razorpay",
+  cashfree: "Cashfree",
+  payu: "PayU",
+  paytm: "Paytm",
+  phonepe: "PhonePe",
+  stripe: "Stripe",
+  upi_qr: "UPI QR",
+  bank_transfer: "Bank transfer",
+  custom: "Custom",
+};
+const gatewayLabel = (p: string) => GATEWAY_LABELS[p] ?? p.replace(/_/g, " ");
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
@@ -315,7 +320,7 @@ function KotItemChip({
   busy,
   onClick,
 }: {
-  item: KotItemT;
+  item: OrderItemT;
   busy: boolean;
   onClick: () => void;
 }) {
@@ -345,89 +350,12 @@ function KotItemChip({
   );
 }
 
-/** One live KOT ticket — receipt-style card shared by the POS KOT Display. */
-function KotTicket({
-  o,
-  busyId,
-  canAct,
-  onAdvance,
-  onAllReady,
-  onServed,
-}: {
-  o: KotOrderT;
-  busyId: string | null;
-  canAct: boolean;
-  onAdvance: (item: KotItemT) => void;
-  onAllReady: () => void;
-  onServed: () => void;
-}) {
-  const late = o.elapsedMinutes > 15;
-  const allReady = o.items.every((i) => i.status === "ready" || i.status === "served");
-  const allDone = o.items.every((i) => i.status === "served");
-  const Icon = o.orderType === "room_service" ? ConciergeBell : o.orderType === "takeaway" ? ShoppingBag : Utensils;
-  const where =
-    o.orderType === "room_service"
-      ? `Room ${o.roomNumber || "—"}`
-      : o.orderType === "takeaway"
-        ? "Takeaway"
-        : `Table ${o.tableNumber || "—"}`;
+/** White-label property line for KOT printouts — the tenant brand, never the platform name. */
+function KotBrandLine({ propertyName }: { propertyName: string }) {
   return (
-    <div className={cn("panel flex flex-col p-4", late && "border-warn")}>
-      <div className="flex items-start justify-between gap-2 border-b border-line pb-3">
-        <div className="min-w-0">
-          <p className="font-display text-2xl font-bold leading-tight text-pine">{o.orderNumber}</p>
-          <p className="mt-0.5 truncate text-xs text-muted-ink">
-            {fmtTime(o.createdAt)}
-            {o.guestName ? ` · ${o.guestName}` : ""}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <span className="badge border-brass/40 bg-brass-50 px-2.5 py-1 text-brass">
-            <Icon className="h-3.5 w-3.5" /> {where}
-          </span>
-          <p className={cn("text-base font-bold leading-none", late ? "text-warn" : "text-muted-ink")}>
-            {o.elapsedMinutes} min
-          </p>
-        </div>
-      </div>
-
-      <ul className="flex-1 space-y-2.5 py-3">
-        {o.items.map((it) => (
-          <li key={it.id} className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="leading-snug">
-                <span className="text-lg font-bold text-pine">{it.qty}×</span> <span className="text-[15px] text-ink">{it.name}</span>
-              </p>
-              {it.notes && <p className="truncate text-xs font-medium text-warn">↳ {it.notes}</p>}
-            </div>
-            {canAct ? (
-              <KotItemChip item={it} busy={busyId === it.id} onClick={() => onAdvance(it)} />
-            ) : (
-              <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-semibold", KOT_ITEM_CHIP[it.status])}>
-                {STATUS_LABELS[it.status] ?? it.status}
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      {canAct && (
-        <div className="flex gap-2 border-t border-line pt-3">
-          <button type="button" className="btn-outline h-10 flex-1 text-[13px]" disabled={allDone || busyId === o.id} onClick={onAllReady}>
-            <Bell className="h-4 w-4" /> All ready
-          </button>
-          <button
-            type="button"
-            className="btn-pine h-10 flex-1 text-[13px]"
-            disabled={!allReady || busyId === o.id}
-            title={allReady ? "Mark the whole order served" : "All items must be ready first"}
-            onClick={onServed}
-          >
-            <Check className="h-4 w-4" /> Served
-          </button>
-        </div>
-      )}
-    </div>
+    <p className="text-[10px] uppercase tracking-[0.2em] text-muted-ink">
+      {propertyName || "Restaurant"} · Kitchen Order Ticket
+    </p>
   );
 }
 
@@ -448,6 +376,7 @@ function TypeCell({ o }: { o: OrderT }) {
 
 export default function PosView() {
   const user = useSession((s) => s.user);
+  const propertyName = user?.propertyName ?? "";
   const { toast } = useToast();
   const canManage = user?.role === "hotel_admin" || user?.role === "restaurant_staff";
 
@@ -488,10 +417,12 @@ export default function PosView() {
   const [settleTarget, setSettleTarget] = useState<OrderT | null>(null);
   const [postingId, setPostingId] = useState<string | null>(null);
 
-  // ── POS sections: Ordering | KOT Display ──
-  const [posTab, setPosTab] = useState<"order" | "kot">("order");
-  const [kots, setKots] = useState<KotOrderT[]>([]);
-  const [kotBusyId, setKotBusyId] = useState<string | null>(null);
+  // ── Order details — tap any order row to inspect & drive its KOT from this terminal ──
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [itemBusyId, setItemBusyId] = useState<string | null>(null);
+
+  // ── Online payment gateways assigned by the platform owner ──
+  const [gateways, setGateways] = useState<GatewayT[]>([]);
 
   // ── Loaders ──
   const loadMenu = useCallback(async () => {
@@ -521,12 +452,17 @@ export default function PosView() {
     }
   }, []);
 
-  const loadKots = useCallback(async () => {
+  useEffect(() => {
+    loadMenu();
+    loadInhouse();
+  }, [loadMenu, loadInhouse]);
+
+  const loadGateways = useCallback(async () => {
     try {
-      const d = await api<{ orders: KotOrderT[] }>("/api/pos/kot");
-      setKots(d.orders);
+      const d = await api<{ gateways: GatewayT[] }>("/api/payments/gateways");
+      setGateways(d.gateways);
     } catch {
-      /* keep stale */
+      /* optional feature — stay quiet */
     }
   }, []);
 
@@ -537,14 +473,10 @@ export default function PosView() {
 
   useEffect(() => {
     loadOrders();
-    loadKots();
+    loadGateways();
     const t = setInterval(loadOrders, 30000);
-    const k = setInterval(loadKots, 15000);
-    return () => {
-      clearInterval(t);
-      clearInterval(k);
-    };
-  }, [loadOrders, loadKots]);
+    return () => clearInterval(t);
+  }, [loadOrders, loadGateways]);
 
   // First-run setup: opening the manager on an empty menu pops the composer open.
   useEffect(() => {
@@ -553,14 +485,13 @@ export default function PosView() {
 
   // Realtime: order status flips (kitchen screen, other terminals) land instantly.
   useRealtime((event) => {
-    if (event === "kot:update") {
-      loadOrders();
-      loadKots();
-    }
+    if (event === "kot:update") loadOrders();
   });
 
   // ── Derived ──
   const selectedGuest = inhouse.find((g) => g.reservationId === reservationId) ?? null;
+  const detailOrder = detailId ? orders.find((o) => o.id === detailId) ?? null : null;
+  const detailBusy = detailOrder ? itemBusyId === detailOrder.id : false;
 
   const visibleItems = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -674,7 +605,6 @@ export default function PosView() {
       setSuccessOrder(res.order);
       toast({ title: `Order ${res.order.orderNumber} sent to kitchen` });
       loadOrders();
-      loadKots();
     } catch (e) {
       toast({ title: "Could not send order", description: errMsg(e), variant: "destructive" });
     } finally {
@@ -741,51 +671,50 @@ export default function PosView() {
     }
   };
 
-  // ── KOT display actions (same feeds as the Kitchen Display) ──
-  const advanceKotItem = async (o: KotOrderT, item: KotItemT) => {
+  // ── Order detail / KOT actions — drive the kitchen ticket from this terminal ──
+  const advanceOrderItem = async (item: OrderItemT) => {
     const next = KOT_ITEM_NEXT[item.status];
-    if (!next || kotBusyId) return;
-    setKotBusyId(item.id);
+    if (!next || itemBusyId) return;
+    setItemBusyId(item.id);
     try {
       await api(`/api/pos/items/${item.id}`, { method: "PATCH", body: JSON.stringify({ status: next }) });
-      await loadKots();
+      await loadOrders();
     } catch (e) {
       toast({ title: "Could not update item", description: errMsg(e), variant: "destructive" });
     } finally {
-      setKotBusyId(null);
+      setItemBusyId(null);
     }
   };
 
-  const kotAllReady = async (o: KotOrderT) => {
+  const detailAllReady = async (o: OrderT) => {
     const targets = o.items.filter((i) => i.status === "pending" || i.status === "preparing");
-    if (targets.length === 0 || kotBusyId) return;
-    setKotBusyId(o.id);
+    if (targets.length === 0 || itemBusyId) return;
+    setItemBusyId(o.id);
     try {
       await Promise.all(
         targets.map((i) => api(`/api/pos/items/${i.id}`, { method: "PATCH", body: JSON.stringify({ status: "ready" }) }))
       );
       toast({ title: `${o.orderNumber} — all items ready` });
-      await loadKots();
+      await loadOrders();
     } catch (e) {
       toast({ title: "Could not update items", description: errMsg(e), variant: "destructive" });
-      await loadKots();
+      await loadOrders();
     } finally {
-      setKotBusyId(null);
+      setItemBusyId(null);
     }
   };
 
-  const kotServed = async (o: KotOrderT) => {
-    if (kotBusyId) return;
-    setKotBusyId(o.id);
+  const detailServed = async (o: OrderT) => {
+    if (itemBusyId) return;
+    setItemBusyId(o.id);
     try {
       await api(`/api/pos/orders/${o.id}`, { method: "PATCH", body: JSON.stringify({ status: "served" }) });
       toast({ title: `${o.orderNumber} marked served` });
-      await loadKots();
-      loadOrders();
+      await loadOrders();
     } catch (e) {
       toast({ title: "Could not update order", description: errMsg(e), variant: "destructive" });
     } finally {
-      setKotBusyId(null);
+      setItemBusyId(null);
     }
   };
 
@@ -947,50 +876,8 @@ export default function PosView() {
   // ── Render ──
   return (
     <div className="space-y-4">
-      <style>{`@media print { body * { visibility: hidden !important; } #kot-print, #kot-print * { visibility: visible !important; } #kot-print { position: fixed; inset: 0; padding: 24px; background: #fff; z-index: 9999; } }`}</style>
+      <style>{`@media print { body * { visibility: hidden !important; } #kot-print, #kot-print * , #kot-print-detail, #kot-print-detail * { visibility: visible !important; } #kot-print, #kot-print-detail { position: fixed; inset: 0; padding: 24px; background: #fff; z-index: 9999; } }`}</style>
 
-      {/* ── POS sections: Ordering | KOT Display ── */}
-      <div className="panel inline-flex flex-wrap items-center gap-1 p-1.5" role="tablist" aria-label="POS sections">
-        {([
-          { key: "order", label: "Ordering", icon: Utensils },
-          { key: "kot", label: "KOT Display", icon: ChefHat },
-        ] as const).map((t) => {
-          const active = posTab === t.key;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setPosTab(t.key)}
-              className={cn(
-                "inline-flex items-center gap-2 rounded-md px-4 h-10 text-sm font-medium transition",
-                active ? "bg-pine-700 text-panel shadow-sm" : "text-pine-700 hover:bg-plaster-deep/60"
-              )}
-            >
-              <t.icon className={cn("h-4 w-4", active ? "text-brass-light" : "text-brass")} />
-              {t.label}
-              {t.key === "kot" && (
-                <span
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-[11px] tabular-nums",
-                    active
-                      ? "bg-white/15 text-panel"
-                      : kots.length > 0
-                        ? "bg-brass/15 text-brass"
-                        : "bg-plaster-deep/70 text-muted-ink"
-                  )}
-                >
-                  {kots.length}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {posTab === "order" ? (
-        <>
       <div className="grid xl:grid-cols-3 gap-4 items-start">
         {/* ── Left: menu ── */}
         <div className="xl:col-span-2">
@@ -1287,14 +1174,40 @@ export default function PosView() {
               {orders.map((o) => {
                 const next = NEXT_STATUS[o.status];
                 const itemCount = o.items.reduce((s, i) => s + i.qty, 0);
+                const readyCount = o.items.filter((i) => i.status === "ready" || i.status === "served").length;
+                const cooking = readyCount > 0 && readyCount < o.items.length;
                 return (
-                  <tr key={o.id}>
+                  <tr
+                    key={o.id}
+                    className="cursor-pointer transition hover:bg-plaster-deep/40"
+                    onClick={() => setDetailId(o.id)}
+                    title="Open order details"
+                  >
                     <td className="td">
-                      <p className="font-medium text-pine">{o.orderNumber}</p>
+                      <p className="font-medium text-pine underline-offset-2 hover:underline">{o.orderNumber}</p>
                       <p className="text-xs text-muted-ink">{fmtTime(o.createdAt)}</p>
                     </td>
                     <td className="td"><TypeCell o={o} /></td>
-                    <td className="td">{itemCount}</td>
+                    <td className="td">
+                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                        <span>{itemCount}</span>
+                        {o.status !== "cancelled" && o.items.length > 0 && (
+                          <span
+                            className={cn(
+                              "badge px-1.5 py-0 text-[10px]",
+                              readyCount === o.items.length
+                                ? "border-ok/40 bg-ok/10 text-ok"
+                                : cooking
+                                  ? "border-brass/40 bg-brass-50 text-brass"
+                                  : "border-line-strong bg-plaster text-muted-ink"
+                            )}
+                            title="Items ready / total"
+                          >
+                            {readyCount}/{o.items.length} ready
+                          </span>
+                        )}
+                      </span>
+                    </td>
                     <td className="td text-right font-medium whitespace-nowrap">
                       {inr(o.totalAmount, { decimals: true })}
                     </td>
@@ -1308,8 +1221,16 @@ export default function PosView() {
                         {STATUS_LABELS[o.paymentStatus] ?? o.paymentStatus}
                       </span>
                     </td>
-                    <td className="td">
+                    <td className="td" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                        <button
+                          className="btn-ghost h-9 w-9 px-0 text-pine-700"
+                          title="Open order details"
+                          aria-label={`Open details for ${o.orderNumber}`}
+                          onClick={() => setDetailId(o.id)}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
                         {o.paymentStatus === "unpaid" && (
                           <button
                             className="btn-brass h-9 px-3 text-xs"
@@ -1350,55 +1271,6 @@ export default function PosView() {
           </table>
         </div>
       </div>
-        </>
-      ) : (
-        /* ── KOT Display — live kitchen tickets inside the POS ── */
-        <section className="space-y-4" aria-label="Kitchen order tickets">
-          <div className="panel flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-md bg-pine-700 text-panel">
-                <ChefHat className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-ink">Live kitchen queue</p>
-                <p className="text-sm text-muted-ink">
-                  {kots.length} pending ticket{kots.length === 1 ? "" : "s"} · auto-refreshes every 15s
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="badge border-line bg-plaster-deep/40 text-muted-ink" title="Same live feed as the Kitchen Display">
-                {kots.reduce((s, o) => s + o.items.length, 0)} items cooking
-              </span>
-              <button className="btn-outline h-9" onClick={loadKots}>
-                <RefreshCw className="h-3.5 w-3.5" /> Refresh
-              </button>
-            </div>
-          </div>
-
-          {kots.length === 0 ? (
-            <div className="panel flex flex-col items-center gap-2 py-14 text-center">
-              <CheckCircle2 className="h-10 w-10 text-ok" />
-              <p className="font-display text-lg font-semibold text-pine">No pending kitchen orders</p>
-              <p className="text-sm text-muted-ink">All caught up — new KOTs land here the moment they are sent.</p>
-            </div>
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {kots.map((o) => (
-                <KotTicket
-                  key={o.id}
-                  o={o}
-                  busyId={kotBusyId}
-                  canAct={canManage}
-                  onAdvance={(it) => advanceKotItem(o, it)}
-                  onAllReady={() => kotAllReady(o)}
-                  onServed={() => kotServed(o)}
-                />
-              ))}
-            </div>
-          )}
-        </section>
-      )}
 
       {/* ── KOT success dialog ── */}
       <Dialog open={!!successOrder} onOpenChange={(open) => !open && setSuccessOrder(null)}>
@@ -1421,7 +1293,7 @@ export default function PosView() {
             <>
               <div id="kot-print" className="rounded-md border border-line bg-panel p-4 font-mono text-sm space-y-2">
                 <div className="text-center space-y-0.5">
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-muted-ink">Velurex HMS · Kitchen Order Ticket</p>
+                  <KotBrandLine propertyName={propertyName} />
                   <p className="text-2xl font-bold text-pine">{successOrder.orderNumber}</p>
                   <p className="text-xs text-muted-ink">
                     {fmtTime(successOrder.createdAt)} ·{" "}
@@ -1509,6 +1381,207 @@ export default function PosView() {
               </button>
             ))}
           </div>
+          {gateways.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="field-label">Online — via your payment gateway</p>
+              <div className="grid gap-2">
+                {gateways.map((g) => (
+                  <button
+                    key={g.id}
+                    className="btn-outline h-11 justify-start px-3"
+                    title={`${g.mode === "live" ? "Live" : "Test"} mode · configured by the platform owner`}
+                    onClick={() => doSettle(g.provider)}
+                  >
+                    <CreditCard className="h-4 w-4 text-brass" />
+                    <span className="text-sm">Pay via {g.label || gatewayLabel(g.provider)}</span>
+                    <span
+                      className={cn(
+                        "badge ml-auto px-1.5 py-0 text-[10px]",
+                        g.mode === "live" ? "border-ok/40 bg-ok/10 text-ok" : "border-warn/40 bg-warn/10 text-warn"
+                      )}
+                    >
+                      {g.mode}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Order detail dialog — inspect the KOT & drive it from this terminal ── */}
+      <Dialog open={!!detailOrder} onOpenChange={(open) => !open && setDetailId(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto scroll-slim sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex flex-wrap items-center gap-2">
+              <ReceiptText className="h-5 w-5 text-brass" />
+              Order {detailOrder?.orderNumber}
+              {detailOrder && (
+                <span className={cn("badge", STATUS_BADGE[detailOrder.status])}>
+                  {STATUS_LABELS[detailOrder.status] ?? detailOrder.status}
+                </span>
+              )}
+              {detailOrder && (
+                <span className={cn("badge", PAY_BADGE[detailOrder.paymentStatus])}>
+                  {STATUS_LABELS[detailOrder.paymentStatus] ?? detailOrder.paymentStatus}
+                </span>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              {detailOrder && (
+                <>
+                  {fmtTime(detailOrder.createdAt)} ·{" "}
+                  {detailOrder.orderType === "dine_in"
+                    ? `Table ${detailOrder.tableNumber || "—"}`
+                    : detailOrder.orderType === "room_service"
+                      ? `Room ${detailOrder.roomNumber}`
+                      : "Takeaway"}
+                  {detailOrder.guestName ? ` · ${detailOrder.guestName}` : ""}
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {detailOrder && (
+            <div className="space-y-3">
+              {/* KOT items with live status — tap a chip to advance it */}
+              <div className="rounded-md border border-line bg-panel">
+                <div className="flex items-center justify-between border-b border-line px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-ink">
+                    Kitchen ticket — items
+                  </p>
+                  <span className="text-[11px] text-muted-ink">tap a status to advance</span>
+                </div>
+                <ul className="divide-y divide-line">
+                  {detailOrder.items.map((it) => (
+                    <li key={it.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="leading-snug">
+                          <span className="font-bold text-pine">{it.qty}×</span> <span className="text-sm text-ink">{it.name}</span>
+                        </p>
+                        {it.notes && <p className="truncate text-xs font-medium text-warn">↳ {it.notes}</p>}
+                      </div>
+                      {canManage ? (
+                        <KotItemChip item={it} busy={itemBusyId === it.id} onClick={() => advanceOrderItem(it)} />
+                      ) : (
+                        <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-semibold", KOT_ITEM_CHIP[it.status])}>
+                          {STATUS_LABELS[it.status] ?? it.status}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Bill breakdown */}
+              <div className="rounded-md border border-line bg-plaster/40 px-3 py-2.5 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-ink">Subtotal</span>
+                  <span>{inr(detailOrder.subtotal, { decimals: true })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-ink">GST</span>
+                  <span>{inr(detailOrder.taxAmount, { decimals: true })}</span>
+                </div>
+                <div className="flex justify-between border-t border-line pt-1.5 font-semibold text-pine">
+                  <span>Total</span>
+                  <span className="font-display text-lg">{inr(detailOrder.totalAmount, { decimals: true })}</span>
+                </div>
+                {detailOrder.paymentStatus !== "unpaid" && (
+                  <p className="text-xs text-muted-ink pt-0.5">
+                    Payment: <b className="uppercase text-ink">{detailOrder.paymentMethod || "—"}</b>
+                  </p>
+                )}
+              </div>
+
+              {/* KOT receipt (printable) */}
+              <div id="kot-print-detail" className="rounded-md border border-dashed border-line-strong bg-panel p-4 font-mono text-sm space-y-2">
+                <div className="text-center space-y-0.5">
+                  <KotBrandLine propertyName={propertyName} />
+                  <p className="text-2xl font-bold text-pine">{detailOrder.orderNumber}</p>
+                  <p className="text-xs text-muted-ink">
+                    {fmtTime(detailOrder.createdAt)} ·{" "}
+                    {detailOrder.orderType === "dine_in"
+                      ? `Table ${detailOrder.tableNumber || "—"}`
+                      : detailOrder.orderType === "room_service"
+                        ? `Room ${detailOrder.roomNumber}`
+                        : "Takeaway"}
+                  </p>
+                </div>
+                <div className="border-t border-dashed border-line-strong pt-2 space-y-1">
+                  {detailOrder.items.map((i) => (
+                    <div key={i.id} className="flex items-baseline justify-between gap-2">
+                      <span>
+                        <span className="font-bold">{i.qty}×</span> {i.name}
+                      </span>
+                      {i.notes && <span className="text-xs text-warn italic">{i.notes}</span>}
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t border-dashed border-line-strong pt-2 flex items-center justify-between">
+                  <span className="text-xs uppercase tracking-wider text-muted-ink">Total (incl. GST)</span>
+                  <span className="font-bold">{inr(detailOrder.totalAmount, { decimals: true })}</span>
+                </div>
+              </div>
+
+              {/* Kitchen + billing actions */}
+              <div className="grid grid-cols-2 gap-2">
+                {canManage && (
+                  <button
+                    type="button"
+                    className="btn-outline h-10 text-[13px]"
+                    disabled={detailBusy || detailOrder.items.every((i) => i.status === "served")}
+                    onClick={() => detailAllReady(detailOrder)}
+                  >
+                    <Bell className="h-4 w-4" /> All ready
+                  </button>
+                )}
+                {canManage && (
+                  <button
+                    type="button"
+                    className="btn-pine h-10 text-[13px]"
+                    disabled={detailBusy || !detailOrder.items.every((i) => i.status === "ready" || i.status === "served")}
+                    title={detailOrder.items.every((i) => i.status === "ready" || i.status === "served") ? "Mark the whole order served" : "All items must be ready first"}
+                    onClick={() => detailServed(detailOrder)}
+                  >
+                    <Check className="h-4 w-4" /> Mark served
+                  </button>
+                )}
+                <button className="btn-outline h-10" onClick={() => window.print()}>
+                  <Printer className="h-4 w-4" /> Print KOT
+                </button>
+                {detailOrder.paymentStatus === "unpaid" && (
+                  <button
+                    className="btn-brass h-10"
+                    onClick={() => {
+                      setSettleTarget(detailOrder);
+                      setDetailId(null);
+                    }}
+                  >
+                    <Wallet className="h-4 w-4" /> Settle payment
+                  </button>
+                )}
+                {detailOrder.paymentStatus === "unpaid" && detailOrder.orderType === "room_service" && detailOrder.reservationId && (
+                  <button
+                    className="btn-brass h-10"
+                    disabled={postingId === detailOrder.id}
+                    onClick={() => doPostFolio(detailOrder)}
+                  >
+                    <ConciergeBell className="h-4 w-4" /> Post to Folio
+                  </button>
+                )}
+                {NEXT_STATUS[detailOrder.status] && (
+                  <button className="btn-pine h-10" onClick={() => advance(detailOrder)}>
+                    {NEXT_LABEL[detailOrder.status]}
+                  </button>
+                )}
+                <button className="btn-ghost h-10" onClick={() => setDetailId(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

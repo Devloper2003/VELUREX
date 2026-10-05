@@ -7,7 +7,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 export type OwnerViewKey =
   | "dashboard" | "analytics"
   | "businesses" | "add-business" | "users" | "onboarding"
-  | "subscriptions" | "addons" | "billing" | "coupons"
+  | "subscriptions" | "addons" | "billing" | "coupons" | "payment-gateways"
   | "tickets" | "announcements"
   | "audit" | "integrations" | "settings" | "health" | "team";
 

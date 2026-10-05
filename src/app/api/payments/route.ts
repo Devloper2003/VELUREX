@@ -7,6 +7,19 @@ const PAYMENT_METHODS = ["cash", "upi", "card", "netbanking", "razorpay"];
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
+ * A method outside the base list is accepted when it matches an ENABLED online
+ * payment gateway the software owner assigned to this property.
+ */
+async function isValidMethod(propertyId: string, method: string): Promise<boolean> {
+  if (PAYMENT_METHODS.includes(method)) return true;
+  const gw = await db.paymentGateway.findFirst({
+    where: { propertyId, enabled: true, provider: method },
+    select: { id: true },
+  });
+  return Boolean(gw);
+}
+
+/**
  * GET /api/payments?reservationId= — payments for a reservation, newest first.
  */
 export async function GET(req: NextRequest) {
@@ -51,8 +64,11 @@ export async function POST(req: NextRequest) {
   if (!Number.isFinite(amount) || amount <= 0) {
     return NextResponse.json({ error: "Amount must be a positive number" }, { status: 400 });
   }
-  if (!PAYMENT_METHODS.includes(method)) {
-    return NextResponse.json({ error: `Invalid method — must be one of: ${PAYMENT_METHODS.join(", ")}` }, { status: 400 });
+  if (!PAYMENT_METHODS.includes(method) && !(await isValidMethod(propertyId, method))) {
+    return NextResponse.json(
+      { error: `Invalid method — must be one of: ${PAYMENT_METHODS.join(", ")} or an enabled gateway provider` },
+      { status: 400 }
+    );
   }
 
   const reservation = await db.reservation.findFirst({ where: { id: reservationId, propertyId } });

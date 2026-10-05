@@ -45,12 +45,12 @@ export const PLATFORM_ROLE_DESCRIPTIONS: Record<PlatformRole, string> = {
 export const ROLE_WRITE_VIEWS: Record<Exclude<PlatformRole, "software_owner">, readonly string[]> = {
   platform_admin: [
     "businesses", "add-business", "users", "onboarding",
-    "subscriptions", "addons", "billing", "coupons",
+    "subscriptions", "addons", "billing", "coupons", "payment-gateways",
     "tickets", "announcements",
     "integrations", "health",
   ],
   platform_support: ["tickets", "announcements"],
-  platform_finance: ["subscriptions", "addons", "billing", "coupons"],
+  platform_finance: ["subscriptions", "addons", "billing", "coupons", "payment-gateways"],
 };
 
 /** Views hidden from the sidebar entirely (no read access worth showing). */

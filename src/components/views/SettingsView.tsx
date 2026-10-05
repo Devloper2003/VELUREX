@@ -33,6 +33,19 @@ interface GoogleProfile {
   lastSyncedAt?: string | null;
 }
 
+/** Provider key → display label (mirrors the payment gateway catalogue). */
+const GATEWAY_LABELS: Record<string, string> = {
+  razorpay: "Razorpay",
+  cashfree: "Cashfree",
+  payu: "PayU",
+  paytm: "Paytm",
+  phonepe: "PhonePe",
+  stripe: "Stripe",
+  upi_qr: "UPI QR",
+  bank_transfer: "Bank transfer",
+  custom: "Custom",
+};
+
 interface PropertyConfig {
   id: string;
   name: string;
@@ -173,6 +186,9 @@ export default function SettingsView() {
   const [googleOpen, setGoogleOpen] = useState(false);
   const [googleEmail, setGoogleEmail] = useState("");
 
+  // Online payment gateways assigned by the platform owner (read-only for tenants)
+  const [payGateways, setPayGateways] = useState<{ id: string; provider: string; label: string; mode: string; isDefault: boolean }[]>([]);
+
   // Staff dialogs
   const [addOpen, setAddOpen] = useState(false);
   const [addForm, setAddForm] = useState({ name: "", email: "", role: "front_desk", phone: "", googleEmail: "" });
@@ -247,6 +263,21 @@ export default function SettingsView() {
   useEffect(() => {
     void loadPulse();
   }, [loadPulse]);
+
+  // Online payment gateways — assigned by the platform owner, read-only here.
+  useEffect(() => {
+    let cancelled = false;
+    api<{ gateways: { id: string; provider: string; label: string; mode: string; isDefault: boolean }[] }>("/api/payments/gateways")
+      .then((d) => {
+        if (!cancelled) setPayGateways(d.gateways ?? []);
+      })
+      .catch(() => {
+        /* optional feature — stay quiet */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const t = window.setInterval(() => { void loadPulse(); }, 30000);
@@ -716,6 +747,38 @@ export default function SettingsView() {
                   </div>
                 )
               ) : null}
+
+              {/* Online payment gateways — assigned by the platform owner */}
+              <div className="rounded-lg border border-line bg-plaster/50 px-4 py-3 flex flex-wrap items-center gap-4">
+                <div className="flex items-start gap-3 flex-1 min-w-[220px]">
+                  <span className="h-9 w-9 rounded-full bg-pine-100 flex items-center justify-center shrink-0 mt-0.5">
+                    <Wallet className="h-4.5 w-4.5 text-pine-700" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[13.5px] font-semibold text-ink leading-tight">Online Payments</p>
+                    {payGateways.length === 0 ? (
+                      <p className="text-[11.5px] text-muted-ink mt-0.5">
+                        No payment gateway assigned yet — the Velurex platform team can connect Razorpay, Cashfree, PayU &amp; more for you.
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                        {payGateways.map((g) => (
+                          <span key={g.id} className="badge border-line-strong bg-panel text-ink">
+                            {g.label || GATEWAY_LABELS[g.provider] || g.provider}
+                            <span className={cn("ml-1 text-[10px] font-semibold", g.mode === "live" ? "text-ok" : "text-warn")}>
+                              {g.mode.toUpperCase()}
+                            </span>
+                            {g.isDefault && <span className="ml-1 text-[10px] text-brass">· default</span>}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <span className="text-[11px] text-muted-ink max-w-[240px] leading-snug">
+                  Configured by the platform team. Gateways appear on POS settle &amp; folio payment screens.
+                </span>
+              </div>
             </TabsContent>
 
             {/* ── Address & Contact ───────────────────────────────────── */}

@@ -11,9 +11,9 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.4.0";
+export const APP_VERSION = "2.5.0";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Kitchen Wire";
+export const APP_RELEASE_CODENAME = "White Label";
 export const APP_RELEASE_DATE = "2026-10-05";
 
 export type ReleaseNote = {
@@ -25,6 +25,20 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.5.0",
+    date: "2026-10-05",
+    codename: "White Label",
+    highlights: [
+      "Openable orders — tap any order in the POS (order number or the eye button) to see full details: every item with its live kitchen status, notes, bill breakdown and payment info",
+      "KOT updates from the POS terminal — the separate KOT Display tab is gone; item statuses (pending → preparing → ready → served) are now driven from the order detail sheet, plus All-ready / Mark-served / Print-KOT actions",
+      "Order rows now show a live kitchen progress chip (2/3 ready) so the queue reads at a glance",
+      "White-labeled KOT — kitchen tickets print and WhatsApp under the hotel's own name; the platform signature was removed from ticket prints and broadcasts",
+      "White-labeled GST tax invoice — richer format with numbered line items (Qty, Rate, Taxable, GST%), CGST/SGST split summary, Place of Supply, amount in words, declaration and an Authorised Signatory block, in-app, in print and in the download",
+      "Payment Gateways — new platform-owner console module: assign Razorpay, Cashfree, PayU, Paytm, PhonePe, Stripe, UPI-QR or bank transfer to any business with test/live mode, encrypted secrets and a default gateway",
+      "Tenants see their assigned gateway on Settings → Property and can settle orders / record folio payments via it; gateway methods validate server-side against the property's enabled gateways",
+    ],
+  },
   {
     version: "2.4.0",
     date: "2026-10-05",

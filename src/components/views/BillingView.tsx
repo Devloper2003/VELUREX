@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from "react";
 import { api } from "@/lib/api-client";
 import { mutate, flushQueue, getQueue } from "@/lib/offline-queue";
-import { inr, fmtDate, fmtDateTime, fmtDateShort, STATUS_LABELS, CATEGORY_LABELS } from "@/lib/format";
+import { inr, fmtDate, fmtDateTime, fmtDateShort, STATUS_LABELS, CATEGORY_LABELS, amountInWordsINR } from "@/lib/format";
 import { receiptHtml, type ReceiptPayload } from "@/lib/receipt-html";
 import { useSession } from "@/lib/store";
 import { useToast } from "@/hooks/use-toast";
@@ -99,7 +99,7 @@ interface InvoiceLine {
 interface InvoicePayload {
   invoiceNo: string;
   date: string;
-  hotel: { name: string; address: string; city: string; gstin: string; phone: string };
+  hotel: { name: string; address: string; city: string; state: string; gstin: string; phone: string; email: string };
   billTo: { fullName: string; phone: string; email: string; address: string; city: string; idType: string; idNumber: string };
   reservation: {
     id: string;
@@ -238,6 +238,28 @@ function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : "Something went wrong";
 }
 
+/** Online payment gateway assigned to this property by the platform owner. */
+interface GatewayInfo {
+  id: string;
+  provider: string;
+  label: string;
+  mode: string;
+  isDefault: boolean;
+}
+
+const GATEWAY_LABELS: Record<string, string> = {
+  razorpay: "Razorpay",
+  cashfree: "Cashfree",
+  payu: "PayU",
+  paytm: "Paytm",
+  phonepe: "PhonePe",
+  stripe: "Stripe",
+  upi_qr: "UPI QR",
+  bank_transfer: "Bank transfer",
+  custom: "Custom",
+};
+const gatewayLabel = (p: string) => GATEWAY_LABELS[p] ?? p.replace(/_/g, " ");
+
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -349,18 +371,27 @@ function groupInvoiceHtml(gi: GroupInvoicePayload): string {
   <p class="dim" style="margin-top:14px"><b>PAYMENTS (ALL ROOMS)</b></p>
   <table style="margin-top:4px"><tbody>${pays}</tbody></table>
   ${gi.group.notes.length ? `<div class="panel" style="margin-top:14px"><p class="dim" style="margin:0 0 6px">BILLING NOTES</p><ul style="margin:0;padding-left:16px;font-size:12px;color:#26302c">${gi.group.notes.map((n) => `<li style="margin-bottom:3px">${esc(n)}</li>`).join("")}</ul></div>` : ""}
-  <p class="foot">Computer-generated invoice — ${esc(gi.invoiceNo)} · ${esc(gi.hotel.name)}</p>
+  <div class="words" style="margin-top:14px;border:1px solid #e3d7c1;border-radius:8px;background:#fff;padding:10px 16px;font-style:italic;font-size:13px"><b>Amount in words:</b> ${esc(amountInWordsINR(gi.grandTotal))}</div>
+  <div class="sig" style="margin-top:34px;display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap;font-size:12px;color:#26302c;align-items:flex-end">
+    <p style="max-width:300px;font-size:11px;color:#7a6f5d">Declaration: We declare that this invoice shows the actual price of the services described and that all particulars are true and correct. This is a computer-generated invoice.</p>
+    <div style="text-align:center"><p style="margin:0"><b>For ${esc(gi.hotel.name)}</b></p><div style="height:44px"></div><p style="margin:0;border-top:1px solid #26302c;padding-top:4px;min-width:180px;text-align:center;color:#7a6f5d;font-size:11px">Authorised Signatory</p></div>
+  </div>
+  <p class="foot">${esc(gi.hotel.name)} · GSTIN ${esc(gi.hotel.gstin) || "—"} — Invoice ${esc(gi.invoiceNo)}</p>
 </body></html>`;
 }
 
 /** Standalone styled HTML for the invoice download. */
 function invoiceHtml(inv: InvoicePayload): string {
   const dateStr = new Date(inv.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const placeOfSupply = inv.hotel.state || inv.hotel.city || "—";
   const lines = inv.lineItems
     .map(
-      (li) => `<tr>
+      (li, i) => `<tr>
+        <td>${i + 1}</td>
         <td><b>${esc(li.description)}</b><br/><span class="dim">${esc(CATEGORY_LABELS[li.category] ?? li.category)} · ${new Date(li.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</span></td>
         <td>${esc(li.hsn)}</td>
+        <td class="r">${li.qty % 1 === 0 ? li.qty : li.qty.toFixed(2)}</td>
+        <td class="r">${money2(li.rate)}</td>
         <td class="r">${money2(li.taxable)}</td>
         <td class="r">${li.gstRate}%</td>
         <td class="r">${money2(li.gstAmount)}</td>
@@ -368,7 +399,10 @@ function invoiceHtml(inv: InvoicePayload): string {
     )
     .join("");
   const breakup = inv.taxBreakup
-    .map((t) => `<tr><td>GST @ ${t.gstRate}%</td><td class="r">${money2(t.taxable)}</td><td class="r">${money2(t.tax)}</td></tr>`)
+    .map(
+      (t) =>
+        `<tr><td>GST @ ${t.gstRate}%</td><td class="r">${money2(t.taxable)}</td><td class="r">${money2(t.tax / 2)}</td><td class="r">${money2(t.tax - t.tax / 2)}</td><td class="r">${money2(t.tax)}</td></tr>`
+    )
     .join("");
   const pays = inv.payments.length
     ? inv.payments
@@ -396,36 +430,44 @@ function invoiceHtml(inv: InvoicePayload): string {
   .grand { border-top: 3px solid #1f4b43; font-weight: bold; font-size: 17px; color: #1f4b43; }
   .cols { display: flex; justify-content: space-between; gap: 24px; margin-top: 16px; flex-wrap: wrap; }
   .panel { border: 1px solid #e3d7c1; border-radius: 8px; padding: 12px 16px; background: #fff; }
+  .words { margin-top: 14px; border: 1px solid #e3d7c1; border-radius: 8px; background: #fff; padding: 10px 16px; font-style: italic; font-size: 13px; }
+  .sig { margin-top: 34px; display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; font-size: 12px; color: #26302c; align-items: flex-end; }
+  .sig .line { border-top: 1px solid #26302c; padding-top: 4px; min-width: 180px; text-align: center; color: #7a6f5d; font-size: 11px; }
   .foot { margin-top: 28px; border-top: 1px solid #e3d7c1; padding-top: 10px; color: #7a6f5d; font-size: 11px; text-align: center; }
 </style></head>
 <body>
   <div class="head">
-    <div><h1>${esc(inv.hotel.name)}</h1><p class="dim">${esc(inv.hotel.address)}${inv.hotel.address ? ", " : ""}${esc(inv.hotel.city)}<br/>GSTIN: <b>${esc(inv.hotel.gstin) || "—"}</b> · Phone: ${esc(inv.hotel.phone) || "—"}</p></div>
-    <div style="text-align:right"><p class="tag">TAX INVOICE</p><p class="dim">Invoice No: <b style="color:#26302c">${esc(inv.invoiceNo)}</b><br/>Date: ${dateStr}</p></div>
+    <div><h1>${esc(inv.hotel.name)}</h1><p class="dim">${esc(inv.hotel.address)}${inv.hotel.address ? ", " : ""}${esc(inv.hotel.city)}${inv.hotel.state ? ", " + esc(inv.hotel.state) : ""}<br/>GSTIN: <b>${esc(inv.hotel.gstin) || "—"}</b>${inv.hotel.phone ? ` · Phone: ${esc(inv.hotel.phone)}` : ""}${inv.hotel.email ? ` · ${esc(inv.hotel.email)}` : ""}</p></div>
+    <div style="text-align:right"><p class="tag">TAX INVOICE</p><p class="dim">Invoice No: <b style="color:#26302c">${esc(inv.invoiceNo)}</b><br/>Date: ${dateStr}<br/>Place of Supply: <b style="color:#26302c">${esc(placeOfSupply)}</b></p></div>
   </div>
   <div class="cols">
     <div><p class="dim" style="margin:0">BILL TO</p><b>${esc(inv.billTo.fullName)}</b><br/><span class="dim">${esc(inv.billTo.address)}${inv.billTo.address ? ", " : ""}${esc(inv.billTo.city)}<br/>${esc(inv.billTo.phone)}${inv.billTo.email ? " · " + esc(inv.billTo.email) : ""}${inv.billTo.idType ? "<br/>" + esc(inv.billTo.idType).toUpperCase() + " " + esc(inv.billTo.idNumber) : ""}</span></div>
     <div style="text-align:right"><p class="dim" style="margin:0">STAY</p>Room <b>${esc(inv.reservation.room?.number ?? "—")}</b> (${esc(inv.reservation.room?.roomType.name ?? "—")})<br/><span class="dim">${new Date(inv.reservation.checkIn).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} → ${new Date(inv.reservation.checkOut).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} · ${inv.reservation.nights} night(s)<br/>Conf #${esc(inv.reservation.confirmationNumber)}</span></div>
   </div>
-  <table><thead><tr><th>Description</th><th>HSN/SAC</th><th class="r">Taxable</th><th class="r">GST%</th><th class="r">GST Amt</th></tr></thead><tbody>${lines}</tbody></table>
+  <table><thead><tr><th>#</th><th>Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Taxable</th><th class="r">GST%</th><th class="r">GST Amt</th></tr></thead><tbody>${lines}</tbody></table>
   <div class="cols">
-    <div class="panel" style="flex:1;min-width:240px"><p class="dim" style="margin:0 0 4px">TAX BREAKUP</p><table style="margin:0">${breakup}</table></div>
+    <div class="panel" style="flex:1;min-width:260px"><p class="dim" style="margin:0 0 4px">GST SUMMARY (CGST + SGST)</p><table style="margin:0"><thead><tr><th>Rate</th><th class="r">Taxable</th><th class="r">CGST</th><th class="r">SGST</th><th class="r">Total</th></tr></thead><tbody>${breakup}</tbody></table></div>
     <div class="panel" style="flex:1;min-width:240px">
       <table style="margin:0" class="tot">
         <tr><td>Subtotal</td><td class="r">${money2(inv.subtotal)}</td></tr>
         ${inv.promoDiscount ? `<tr><td>Discount (${esc(inv.promoDiscount.code)})</td><td class="r">−${money2(inv.discountTotal)}</td></tr>` : ""}
         <tr><td>Taxable Value</td><td class="r">${money2(inv.taxableTotal)}</td></tr>
-        <tr><td>Total GST</td><td class="r">${money2(inv.totalTax)}</td></tr>
+        <tr><td>Total GST (CGST + SGST)</td><td class="r">${money2(inv.totalTax)}</td></tr>
         <tr><td>Grand Total</td><td class="r">${money2(inv.grandTotal)}</td></tr>
         <tr><td>Total Paid</td><td class="r">${money2(inv.paid)}</td></tr>
         <tr class="grand"><td>Balance Due</td><td class="r">${money2(inv.balance)}</td></tr>
       </table>
     </div>
   </div>
+  <div class="words"><b>Amount in words:</b> ${esc(amountInWordsINR(inv.grandTotal))}</div>
   <p class="dim" style="margin-top:18px"><b>PAYMENTS</b></p>
   <table style="margin-top:4px"><tbody>${pays}</tbody></table>
   ${notesHtml}
-  <p class="foot">Computer-generated invoice — ${esc(inv.invoiceNo)} · ${esc(inv.hotel.name)}</p>
+  <div class="sig">
+    <p style="max-width:300px;font-size:11px;color:#7a6f5d">Declaration: We declare that this invoice shows the actual price of the services described and that all particulars are true and correct. This is a computer-generated invoice.</p>
+    <div style="text-align:center"><p style="margin:0"><b>For ${esc(inv.hotel.name)}</b></p><div style="height:44px"></div><p class="line" style="margin:0">Authorised Signatory</p></div>
+  </div>
+  <p class="foot">${esc(inv.hotel.name)} · ${esc(inv.hotel.address)}${inv.hotel.address ? ", " : ""}${esc(inv.hotel.city)} · GSTIN ${esc(inv.hotel.gstin) || "—"} — Invoice ${esc(inv.invoiceNo)}</p>
 </body></html>`;
 }
 
@@ -470,6 +512,22 @@ export default function BillingView() {
   const [payAmount, setPayAmount] = useState("");
   const [payMethod, setPayMethod] = useState("cash");
   const [payReference, setPayReference] = useState("");
+
+  // Online payment gateways assigned to this property by the platform owner
+  const [gateways, setGateways] = useState<GatewayInfo[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    api<{ gateways: GatewayInfo[] }>("/api/payments/gateways")
+      .then((d) => {
+        if (!cancelled) setGateways(d.gateways ?? []);
+      })
+      .catch(() => {
+        /* optional feature — stay quiet */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [voidItem, setVoidItem] = useState<FolioItemRow | null>(null);
   const [voiding, setVoiding] = useState(false);
@@ -2012,9 +2070,19 @@ export default function BillingView() {
               <Select value={payMethod} onValueChange={setPayMethod}>
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {PAYMENT_METHODS.map((m) => (
+                  {PAYMENT_METHODS.filter((m) => !gateways.some((g) => g.provider === m)).map((m) => (
                     <SelectItem key={m} value={m} className="capitalize">{m.toUpperCase()}</SelectItem>
                   ))}
+                  {gateways.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel>Online gateway</SelectLabel>
+                      {gateways.map((g) => (
+                        <SelectItem key={g.id} value={g.provider}>
+                          {(g.label || gatewayLabel(g.provider)).toUpperCase()}{g.mode === "live" ? " · LIVE" : " · TEST"}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -2141,9 +2209,19 @@ export default function BillingView() {
                 <Select value={groupPayMethod} onValueChange={setGroupPayMethod}>
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {PAYMENT_METHODS.map((m) => (
+                    {PAYMENT_METHODS.filter((m) => !gateways.some((g) => g.provider === m)).map((m) => (
                       <SelectItem key={m} value={m} className="capitalize">{m.toUpperCase()}</SelectItem>
                     ))}
+                    {gateways.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel>Online gateway</SelectLabel>
+                        {gateways.map((g) => (
+                          <SelectItem key={g.id} value={g.provider}>
+                            {(g.label || gatewayLabel(g.provider)).toUpperCase()}{g.mode === "live" ? " · LIVE" : " · TEST"}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -2186,7 +2264,17 @@ export default function BillingView() {
 
 // ─── Invoice document ────────────────────────────────────────────────────────
 
+/** CGST/SGST halves of a GST amount — intra-state supply (hotels bill within their own state). */
+function splitHalf(total: number): number {
+  return Math.round((total / 2) * 100) / 100;
+}
+
+/**
+ * White-labeled GST tax invoice document (screen + print).
+ * Every printed line belongs to the tenant's own hotel — no platform branding.
+ */
 function InvoiceDoc({ inv }: { inv: InvoicePayload }) {
+  const placeOfSupply = inv.hotel.state || inv.hotel.city || "—";
   return (
     <div className="max-w-3xl mx-auto text-sm">
       {/* Header */}
@@ -2194,16 +2282,19 @@ function InvoiceDoc({ inv }: { inv: InvoicePayload }) {
         <div className="min-w-0">
           <h2 className="font-display text-2xl font-semibold text-pine">{inv.hotel.name}</h2>
           <p className="text-xs text-muted-ink mt-1">
-            {inv.hotel.address}{inv.hotel.address ? ", " : ""}{inv.hotel.city}
+            {inv.hotel.address}{inv.hotel.address ? ", " : ""}{inv.hotel.city}{inv.hotel.state ? `, ${inv.hotel.state}` : ""}
           </p>
           <p className="text-xs text-muted-ink">
-            GSTIN: <b className="text-ink">{inv.hotel.gstin || "—"}</b> · Phone: {inv.hotel.phone || "—"}
+            GSTIN: <b className="text-ink">{inv.hotel.gstin || "—"}</b>
+            {inv.hotel.phone ? <> · Phone: {inv.hotel.phone}</> : null}
+            {inv.hotel.email ? <> · {inv.hotel.email}</> : null}
           </p>
         </div>
         <div className="sm:text-right">
           <p className="font-display text-lg font-semibold text-brass tracking-[0.2em]">TAX INVOICE</p>
           <p className="text-xs text-muted-ink mt-1">Invoice No: <b className="text-ink">{inv.invoiceNo}</b></p>
           <p className="text-xs text-muted-ink">Date: {fmtDateTime(inv.date)}</p>
+          <p className="text-xs text-muted-ink">Place of Supply: <b className="text-ink">{placeOfSupply}</b></p>
         </div>
       </div>
 
@@ -2234,8 +2325,11 @@ function InvoiceDoc({ inv }: { inv: InvoicePayload }) {
       <table className="w-full mt-4">
         <thead>
           <tr className="border-b border-line-strong">
+            <th className="text-left py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-ink pr-2">#</th>
             <th className="text-left py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-ink">Description</th>
             <th className="text-left py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-ink">HSN/SAC</th>
+            <th className="text-right py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-ink">Qty</th>
+            <th className="text-right py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-ink">Rate</th>
             <th className="text-right py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-ink">Taxable</th>
             <th className="text-right py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-ink">GST%</th>
             <th className="text-right py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-ink">GST Amt</th>
@@ -2243,17 +2337,20 @@ function InvoiceDoc({ inv }: { inv: InvoicePayload }) {
         </thead>
         <tbody>
           {inv.lineItems.length === 0 && (
-            <tr><td colSpan={5} className="py-6 text-center text-muted-ink">No billable items on this folio.</td></tr>
+            <tr><td colSpan={8} className="py-6 text-center text-muted-ink">No billable items on this folio.</td></tr>
           )}
-          {inv.lineItems.map((li) => (
+          {inv.lineItems.map((li, idx) => (
             <tr key={li.id} className="border-b border-line/70 align-top">
+              <td className="py-2 text-xs text-muted-ink">{idx + 1}</td>
               <td className="py-2">
                 <span className="font-medium">{li.description}</span>
                 <span className="block text-[11px] text-muted-ink">
-                  {CATEGORY_LABELS[li.category] ?? li.category} · {fmtDateShort(li.date)} · {li.qty % 1 === 0 ? li.qty : li.qty.toFixed(2)} × {money2(li.rate)}
+                  {CATEGORY_LABELS[li.category] ?? li.category} · {fmtDateShort(li.date)}
                 </span>
               </td>
               <td className="py-2 text-xs">{li.hsn}</td>
+              <td className="py-2 text-right whitespace-nowrap">{li.qty % 1 === 0 ? li.qty : li.qty.toFixed(2)}</td>
+              <td className="py-2 text-right whitespace-nowrap">{money2(li.rate)}</td>
               <td className="py-2 text-right whitespace-nowrap">{money2(li.taxable)}</td>
               <td className="py-2 text-right">{li.gstRate}%</td>
               <td className="py-2 text-right whitespace-nowrap">{money2(li.gstAmount)}</td>
@@ -2262,7 +2359,7 @@ function InvoiceDoc({ inv }: { inv: InvoicePayload }) {
         </tbody>
       </table>
 
-      {/* Totals + tax breakup */}
+      {/* Totals + CGST/SGST breakup */}
       <div className="grid sm:grid-cols-2 gap-4 mt-4">
         <div className="border border-line rounded-md p-3">
           <p className="field-label">GST Summary</p>
@@ -2271,7 +2368,8 @@ function InvoiceDoc({ inv }: { inv: InvoicePayload }) {
               <tr className="border-b border-line">
                 <th className="text-left py-1.5 text-[10px] uppercase tracking-wider text-muted-ink">Rate</th>
                 <th className="text-right py-1.5 text-[10px] uppercase tracking-wider text-muted-ink">Taxable</th>
-                <th className="text-right py-1.5 text-[10px] uppercase tracking-wider text-muted-ink">Tax</th>
+                <th className="text-right py-1.5 text-[10px] uppercase tracking-wider text-muted-ink">CGST</th>
+                <th className="text-right py-1.5 text-[10px] uppercase tracking-wider text-muted-ink">SGST</th>
               </tr>
             </thead>
             <tbody>
@@ -2279,11 +2377,12 @@ function InvoiceDoc({ inv }: { inv: InvoicePayload }) {
                 <tr key={t.gstRate} className="border-b border-line/60">
                   <td className="py-1.5">GST @ {t.gstRate}%</td>
                   <td className="py-1.5 text-right">{money2(t.taxable)}</td>
-                  <td className="py-1.5 text-right">{money2(t.tax)}</td>
+                  <td className="py-1.5 text-right">{money2(splitHalf(t.tax))}</td>
+                  <td className="py-1.5 text-right">{money2(t.tax - splitHalf(t.tax))}</td>
                 </tr>
               ))}
               {inv.taxBreakup.length === 0 && (
-                <tr><td colSpan={3} className="py-3 text-center text-muted-ink">No taxable items</td></tr>
+                <tr><td colSpan={4} className="py-3 text-center text-muted-ink">No taxable items</td></tr>
               )}
             </tbody>
           </table>
@@ -2298,7 +2397,7 @@ function InvoiceDoc({ inv }: { inv: InvoicePayload }) {
               </div>
             )}
             <div className="flex justify-between"><span className="text-muted-ink">Taxable Value</span><span>{money2(inv.taxableTotal)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-ink">Total GST</span><span>{money2(inv.totalTax)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-ink">Total GST (CGST + SGST)</span><span>{money2(inv.totalTax)}</span></div>
             <div className="flex justify-between border-t border-line pt-1.5 font-semibold text-pine">
               <span>Grand Total</span><span className="font-display text-base">{money2(inv.grandTotal)}</span>
             </div>
@@ -2309,6 +2408,12 @@ function InvoiceDoc({ inv }: { inv: InvoicePayload }) {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Amount in words */}
+      <div className="mt-4 border border-line rounded-md bg-plaster/40 px-3 py-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-ink">Amount in words</p>
+        <p className="text-xs font-medium text-pine italic">{amountInWordsINR(inv.grandTotal)}</p>
       </div>
 
       {/* Payments */}
@@ -2343,8 +2448,21 @@ function InvoiceDoc({ inv }: { inv: InvoicePayload }) {
         </div>
       )}
 
+      {/* Declaration + signature block */}
+      <div className="mt-6 flex flex-wrap justify-between items-end gap-6">
+        <p className="text-[11px] text-muted-ink max-w-xs">
+          Declaration: We declare that this invoice shows the actual price of the services described and that all
+          particulars are true and correct. This is a computer-generated invoice.
+        </p>
+        <div className="text-center">
+          <p className="text-xs font-medium text-ink">For <span className="font-semibold text-pine">{inv.hotel.name}</span></p>
+          <div className="h-12" aria-hidden />
+          <p className="text-[11px] text-muted-ink border-t border-line pt-1 min-w-[180px]">Authorised Signatory</p>
+        </div>
+      </div>
+
       <p className="text-center text-[11px] text-muted-ink border-t border-line mt-6 pt-3">
-        Computer-generated invoice · {inv.invoiceNo} · {inv.hotel.name} — no signature required.
+        {inv.hotel.name} · {inv.hotel.address}{inv.hotel.address ? ", " : ""}{inv.hotel.city} · GSTIN {inv.hotel.gstin || "—"} — Invoice {inv.invoiceNo}
       </p>
     </div>
   );

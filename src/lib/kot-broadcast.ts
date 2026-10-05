@@ -164,7 +164,6 @@ export function buildKotText(o: KotBroadcastOrder, propertyName: string): string
   }
   lines.push("──────────────");
   lines.push(`Items: ${itemCount(o)} · *${inr(o.totalAmount)}* incl. GST`);
-  lines.push("_Sent via Velurex HMS_");
   return lines.join("\n");
 }
 
@@ -247,7 +246,7 @@ export async function buildKotImage(o: KotBroadcastOrder, propertyName: string):
 
   const headerH = 104;
   const metaH = 36;
-  const footH = 64;
+  const footH = 44; // total line + bottom padding (platform branding removed — white-label)
   const height = headerH + metaH + 20 + itemsH + 18 + footH;
 
   const parts: string[] = [];
@@ -331,9 +330,6 @@ export async function buildKotImage(o: KotBroadcastOrder, propertyName: string):
     `<text x="${PAGE_W - 20}" y="${fy}" text-anchor="end" font-family="${SANS}" font-size="16" font-weight="bold" fill="${PINE}">${xmlEsc(
       `${inr(o.totalAmount)} incl. GST`
     )}</text>`
-  );
-  parts.push(
-    `<text x="20" y="${fy + 22}" font-family="${SANS}" font-size="10.5" fill="${MUTED}" letter-spacing="1">Sent via Velurex HMS</text>`
   );
   parts.push(`</svg>`);
 

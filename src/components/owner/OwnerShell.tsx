@@ -7,7 +7,7 @@ import {
   LayoutDashboard, BarChart3, Building2, UserPlus, Users, Route,
   CreditCard, ReceiptIndianRupee, TicketPercent, LifeBuoy, Megaphone,
   ScrollText, Network, Settings2, Activity, UserCog, LogOut, Menu, X,
-  ChevronDown, ShieldCheck, Search, Command, CornerDownLeft, FlaskConical, Puzzle,
+  ChevronDown, ShieldCheck, Search, Command, CornerDownLeft, FlaskConical, Puzzle, Wallet,
 } from "lucide-react";
 import { useSession } from "@/lib/store";
 import { useOwner, type OwnerViewKey } from "@/lib/owner-store";
@@ -34,6 +34,7 @@ import OwnerTicketsView from "./views/TicketsView";
 import OwnerAnnouncementsView from "./views/AnnouncementsView";
 import OwnerAuditView from "./views/AuditView";
 import OwnerIntegrationsView from "./views/IntegrationsView";
+import OwnerPaymentGatewaysView from "./views/PaymentGatewaysView";
 import OwnerSettingsView from "./views/SettingsView";
 import OwnerHealthView from "./views/HealthView";
 import OwnerTeamView from "./views/TeamView";
@@ -49,6 +50,7 @@ const VIEW_TITLES: Record<OwnerViewKey, { title: string; sub: string }> = {
   addons: { title: "Add-ons Catalog", sub: "Sellable feature unlocks, capacity packs & services" },
   billing: { title: "Billing & Invoices", sub: "GST invoices, payments & revenue export" },
   coupons: { title: "Coupons & Offers", sub: "Discount and trial-extension codes" },
+  "payment-gateways": { title: "Payment Gateways", sub: "Online payment providers assigned to each business" },
   tickets: { title: "Support Tickets", sub: "Tenant issues, replies & internal notes" },
   announcements: { title: "Announcements", sub: "In-app banners by audience" },
   audit: { title: "Audit Logs", sub: "Every sensitive platform action" },
@@ -81,6 +83,7 @@ const NAV: { group: string; items: { key: OwnerViewKey; label: string; icon: Rea
       { key: "subscriptions", label: "Subscriptions", icon: CreditCard },
       { key: "addons", label: "Add-ons Catalog", icon: Puzzle },
       { key: "billing", label: "Billing & Invoices", icon: ReceiptIndianRupee },
+      { key: "payment-gateways", label: "Payment Gateways", icon: Wallet },
       { key: "coupons", label: "Coupons & Offers", icon: TicketPercent },
     ],
   },
@@ -113,6 +116,7 @@ const VIEW_COMPONENTS: Record<OwnerViewKey, React.ComponentType> = {
   subscriptions: OwnerSubscriptionsView,
   addons: OwnerAddonsCatalogView,
   billing: OwnerBillingView,
+  "payment-gateways": OwnerPaymentGatewaysView,
   coupons: OwnerCouponsView,
   tickets: OwnerTicketsView,
   announcements: OwnerAnnouncementsView,

@@ -12,6 +12,29 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.5.0] — 2026-10-05 · White Label
+
+### Added — Payment Gateways (platform owner → tenants)
+- **New owner-console module — Revenue → Payment Gateways**: the software owner can now assign online payment providers to any tenant business. Supported providers: Razorpay, Cashfree, PayU, Paytm, PhonePe, Stripe, UPI QR (manual) and bank transfer, plus a Custom option.
+- **Per-gateway configuration**: display label, test/live mode, merchant/key ID, key secret (encrypted at rest with AES-256-GCM, never returned by any API, never shown to the tenant), enable/disable switch, a per-property default, and platform-side notes. Secrets cannot be stored on demo tenants; one default gateway per property is enforced server-side.
+- **Tenant side**: the assigned gateways appear read-only on Settings → Property ("Online Payments" card), and usable at the point of payment — the POS settle dialog gains "Pay via <gateway>" buttons and the folio/group payment dialogs gain an "Online gateway" section in the method selector.
+- **Server-side method validation**: `/api/payments` and the POS settle endpoint accept any method matching an *enabled* gateway of the property (e.g. `razorpay`), so a tenant can only pay through gateways the owner actually assigned.
+- New `PaymentGateway` Prisma model (`prisma/manual-migrations/v2.5.0_payment_gateways.sql` carries the idempotent PostgreSQL migration for production; local SQLite was pushed with `db:push`).
+
+### Added — Openable orders in the POS
+- **Tap any order to open its details**: the Today's Orders table is now fully openable (click the row or the eye button) — a detail sheet shows every item with its live kitchen status, cooking notes, the bill breakdown (subtotal, GST, total) and payment info.
+- **KOT updates from the POS terminal**: the separate `KOT Display` tab is gone. Item statuses (Pending → Preparing → Ready → Served) are driven directly from the order detail sheet — tap a status chip to advance, plus All-ready, Mark-served and Print-KOT (reprint) actions. The Kitchen Display under PMS keeps the same powers for the kitchen.
+- **Live progress on the rows**: each order row now carries a `2/3 ready` chip (amber while cooking, green when plated) so the kitchen queue reads at a glance without any extra tab.
+
+### Changed — White-labeled documents
+- **KOT is now fully the hotel's**: the printed kitchen ticket header shows the property's own name instead of the platform name, and the "Sent via Velurex HMS" signature was removed from KOT printouts, WhatsApp text messages and the ticket image (image height tightened accordingly).
+- **GST tax invoice format upgraded** (screen, print and HTML download): numbered line items with Qty and Rate columns, a CGST/SGST split GST summary, Place of Supply, Amount in words (Indian numbering), a legal declaration line and an Authorised Signatory block — every line branded to the tenant hotel, zero platform branding. The consolidated group invoice also gained amount-in-words and the signature block.
+
+### Notes
+- No breaking changes; the invoice payload gained `hotel.state`/`hotel.email` (additive). Existing orders, folios, invoices and payments are untouched.
+
+---
+
 ## [2.4.0] — 2026-10-05 · Kitchen Wire
 
 ### Added — KOT WhatsApp broadcast (F&B / POS → Settings → WhatsApp API → Step 4)
