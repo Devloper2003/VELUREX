@@ -4,6 +4,7 @@ import { requireAuth, type Role } from "@/lib/auth";
 import { logActivity, nextOrderNumber, startOfDay } from "@/lib/business";
 import { emitRealtime } from "@/lib/realtime-server";
 import { getTenantEntitlements, requireFeature, assertWritable } from "@/lib/entitlements";
+import { broadcastKot } from "@/lib/kot-broadcast";
 
 const ORDER_TYPES = ["dine_in", "room_service", "takeaway"];
 const POS_ROLES: Role[] = ["hotel_admin", "restaurant_staff", "front_desk"];
@@ -203,5 +204,19 @@ export async function POST(req: NextRequest) {
   });
   emitRealtime("global", "kot:update", { kind: "new", orderId: order.id, orderNumber: order.orderNumber, where });
 
-  return NextResponse.json({ order }, { status: 201 });
+  // Owner + group WhatsApp broadcast of the fresh KOT (branded image, text
+  // fallback) — best-effort, never blocks or fails the order.
+  const kotBroadcast = await broadcastKot(propertyId, {
+    orderNumber: order.orderNumber,
+    orderType: order.orderType,
+    tableNumber: order.tableNumber,
+    roomNumber: order.roomNumber,
+    createdAt: order.createdAt,
+    subtotal: order.subtotal,
+    taxAmount: order.taxAmount,
+    totalAmount: order.totalAmount,
+    items: order.items.map((i) => ({ name: i.name, qty: i.qty, notes: i.notes })),
+  });
+
+  return NextResponse.json({ order, kotBroadcast }, { status: 201 });
 }

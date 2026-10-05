@@ -12,6 +12,28 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.4.0] — 2026-10-05 · Kitchen Wire
+
+### Added — KOT WhatsApp broadcast (F&B / POS → Settings → WhatsApp API → Step 4)
+- **KOTs now reach WhatsApp automatically**: the moment an order is sent to the kitchen, the full ticket — items, quantities, cooking notes and GST total — is broadcast to the property owner(s) and a tenant-managed group list. Owner numbers are picked up automatically from active admin accounts (deduplicated); the group list holds up to 12 numbers configured per tenant.
+- **Branded ticket images**: the KOT is rendered server-side as a pine-and-brass receipt image (hotel name header, KOT number, table/room strip, monospace item lines with amber note lines, GST total footer) via SVG → PNG, sent with a one-line caption. If image delivery fails, the plain-text version is sent instead; a "Text only" format switch is available.
+- **KOT broadcast settings card**: on/off toggle, image/text format selector, group-number editor (one per line) with counts, and a live text-message preview. Every send is logged in the WhatsApp message log (`kot_broadcast`, per-number delivery status; "Simulated" until Cloud API credentials are live).
+- **Zero-schema-change config**: broadcast settings ride inside the existing WhatsApp config JSON alongside the template switches — nothing to migrate, existing tenants default to enabled/image and can switch off any time. Recipients are hard-capped at 10 per ticket; a KOT is not a marketing channel.
+
+### Added — KOT Display tab inside the POS
+- **Live kitchen queue in the POS**: a new `Ordering | KOT Display` segmented control at the top of the POS; the KOT Display shows pending kitchen tickets as receipt-style cards (order number, table/room badge, elapsed minutes with late-ticket amber highlight, item lines with notes).
+- **Item-level progression from the POS**: status chips on every item (Pending → Preparing → Ready → Served) tap to advance — the same API and realtime feed as the Kitchen Display — plus All-ready and Served actions per ticket, a live pending count badge on the tab, 15s auto-refresh and instant SSE updates.
+
+### Changed — POS terminal layout
+- **Fixed-height menu panel**: the dish grid now scrolls inside its own panel (slim brass scrollbar, category tabs and search pinned) instead of stretching the page — the POS behaves like a terminal on desktop while mobile keeps a capped 62vh scroller.
+- **Bounded cart**: long orders scroll internally (max 300px) so Totals and Send to Kitchen stay reachable.
+
+### Security & data
+- Broadcast sends are strictly best-effort and never block or fail order creation; recipients resolve server-side (owner accounts + tenant config — never client-supplied); phone-shape validation on save; every send is audit-logged per number. No data hard-coded in source, no schema changes, no existing data touched.
+
+---
+
+
 ## [2.3.2] — 2026-10-05 · Menu Craft
 
 ### Changed — Menu management redesigned (F&B / POS → Manage)

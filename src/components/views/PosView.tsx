@@ -27,13 +27,16 @@ import {
   Banknote,
   Bell,
   CakeSlice,
-  ChefHat,
+  Check,
   CheckCircle2,
+  ChefHat,
   ChevronUp,
+  Clock,
   Coffee,
   ConciergeBell,
   CookingPot,
   CreditCard,
+  Flame,
   ImagePlus,
   LayoutGrid,
   Minus,
@@ -110,6 +113,26 @@ interface InhouseT {
   roomNumber: string;
 }
 
+interface KotItemT {
+  id: string;
+  name: string;
+  qty: number;
+  notes: string;
+  status: string;
+}
+
+interface KotOrderT {
+  id: string;
+  orderNumber: string;
+  orderType: string;
+  tableNumber: string;
+  roomNumber: string;
+  guestName: string;
+  createdAt: string;
+  elapsedMinutes: number;
+  items: KotItemT[];
+}
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 type OrderTypeKey = "dine_in" | "room_service" | "takeaway";
@@ -140,6 +163,16 @@ const CAT_ICONS: Record<string, typeof Utensils> = {
 
 const NEXT_STATUS: Record<string, string> = { pending: "preparing", preparing: "served", served: "completed" };
 const NEXT_LABEL: Record<string, string> = { pending: "Start prep", preparing: "Mark served", served: "Complete" };
+
+// Item-level KOT progression (mirrors the Kitchen Display)
+const KOT_ITEM_NEXT: Record<string, string> = { pending: "preparing", preparing: "ready", ready: "served" };
+
+const KOT_ITEM_CHIP: Record<string, string> = {
+  pending: "border-line-strong bg-plaster text-ink",
+  preparing: "border-warn/50 bg-warn/10 text-warn",
+  ready: "border-brass/50 bg-brass-50 text-brass",
+  served: "border-ok/50 bg-ok/10 text-ok",
+};
 
 const STATUS_BADGE: Record<string, string> = {
   pending: "border-warn/40 bg-warn/10 text-warn",
@@ -276,6 +309,128 @@ function VegDot({ isVeg }: { isVeg: boolean }) {
   );
 }
 
+/** Item status chip on a KOT ticket — tap to advance (pending → preparing → ready → served). */
+function KotItemChip({
+  item,
+  busy,
+  onClick,
+}: {
+  item: KotItemT;
+  busy: boolean;
+  onClick: () => void;
+}) {
+  const next = KOT_ITEM_NEXT[item.status];
+  const Icon = item.status === "pending" ? Clock : item.status === "preparing" ? Flame : item.status === "ready" ? Bell : Check;
+  if (!next) {
+    return (
+      <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-semibold", KOT_ITEM_CHIP[item.status])}>
+        <Icon className="h-3.5 w-3.5" /> {STATUS_LABELS[item.status] ?? item.status}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      title={`Tap → ${STATUS_LABELS[next] ?? next}`}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-semibold transition hover:scale-[1.04] active:scale-95 disabled:opacity-60",
+        KOT_ITEM_CHIP[item.status]
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" /> {STATUS_LABELS[item.status] ?? item.status}
+      <span className="text-[10px] opacity-60">▸</span>
+    </button>
+  );
+}
+
+/** One live KOT ticket — receipt-style card shared by the POS KOT Display. */
+function KotTicket({
+  o,
+  busyId,
+  canAct,
+  onAdvance,
+  onAllReady,
+  onServed,
+}: {
+  o: KotOrderT;
+  busyId: string | null;
+  canAct: boolean;
+  onAdvance: (item: KotItemT) => void;
+  onAllReady: () => void;
+  onServed: () => void;
+}) {
+  const late = o.elapsedMinutes > 15;
+  const allReady = o.items.every((i) => i.status === "ready" || i.status === "served");
+  const allDone = o.items.every((i) => i.status === "served");
+  const Icon = o.orderType === "room_service" ? ConciergeBell : o.orderType === "takeaway" ? ShoppingBag : Utensils;
+  const where =
+    o.orderType === "room_service"
+      ? `Room ${o.roomNumber || "—"}`
+      : o.orderType === "takeaway"
+        ? "Takeaway"
+        : `Table ${o.tableNumber || "—"}`;
+  return (
+    <div className={cn("panel flex flex-col p-4", late && "border-warn")}>
+      <div className="flex items-start justify-between gap-2 border-b border-line pb-3">
+        <div className="min-w-0">
+          <p className="font-display text-2xl font-bold leading-tight text-pine">{o.orderNumber}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-ink">
+            {fmtTime(o.createdAt)}
+            {o.guestName ? ` · ${o.guestName}` : ""}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          <span className="badge border-brass/40 bg-brass-50 px-2.5 py-1 text-brass">
+            <Icon className="h-3.5 w-3.5" /> {where}
+          </span>
+          <p className={cn("text-base font-bold leading-none", late ? "text-warn" : "text-muted-ink")}>
+            {o.elapsedMinutes} min
+          </p>
+        </div>
+      </div>
+
+      <ul className="flex-1 space-y-2.5 py-3">
+        {o.items.map((it) => (
+          <li key={it.id} className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="leading-snug">
+                <span className="text-lg font-bold text-pine">{it.qty}×</span> <span className="text-[15px] text-ink">{it.name}</span>
+              </p>
+              {it.notes && <p className="truncate text-xs font-medium text-warn">↳ {it.notes}</p>}
+            </div>
+            {canAct ? (
+              <KotItemChip item={it} busy={busyId === it.id} onClick={() => onAdvance(it)} />
+            ) : (
+              <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-semibold", KOT_ITEM_CHIP[it.status])}>
+                {STATUS_LABELS[it.status] ?? it.status}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {canAct && (
+        <div className="flex gap-2 border-t border-line pt-3">
+          <button type="button" className="btn-outline h-10 flex-1 text-[13px]" disabled={allDone || busyId === o.id} onClick={onAllReady}>
+            <Bell className="h-4 w-4" /> All ready
+          </button>
+          <button
+            type="button"
+            className="btn-pine h-10 flex-1 text-[13px]"
+            disabled={!allReady || busyId === o.id}
+            title={allReady ? "Mark the whole order served" : "All items must be ready first"}
+            onClick={onServed}
+          >
+            <Check className="h-4 w-4" /> Served
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TypeCell({ o }: { o: OrderT }) {
   return (
     <div className="min-w-0">
@@ -329,8 +484,14 @@ export default function PosView() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [successOrder, setSuccessOrder] = useState<OrderT | null>(null);
+  const [successKotNote, setSuccessKotNote] = useState("");
   const [settleTarget, setSettleTarget] = useState<OrderT | null>(null);
   const [postingId, setPostingId] = useState<string | null>(null);
+
+  // ── POS sections: Ordering | KOT Display ──
+  const [posTab, setPosTab] = useState<"order" | "kot">("order");
+  const [kots, setKots] = useState<KotOrderT[]>([]);
+  const [kotBusyId, setKotBusyId] = useState<string | null>(null);
 
   // ── Loaders ──
   const loadMenu = useCallback(async () => {
@@ -360,6 +521,15 @@ export default function PosView() {
     }
   }, []);
 
+  const loadKots = useCallback(async () => {
+    try {
+      const d = await api<{ orders: KotOrderT[] }>("/api/pos/kot");
+      setKots(d.orders);
+    } catch {
+      /* keep stale */
+    }
+  }, []);
+
   useEffect(() => {
     loadMenu();
     loadInhouse();
@@ -367,9 +537,14 @@ export default function PosView() {
 
   useEffect(() => {
     loadOrders();
+    loadKots();
     const t = setInterval(loadOrders, 30000);
-    return () => clearInterval(t);
-  }, [loadOrders]);
+    const k = setInterval(loadKots, 15000);
+    return () => {
+      clearInterval(t);
+      clearInterval(k);
+    };
+  }, [loadOrders, loadKots]);
 
   // First-run setup: opening the manager on an empty menu pops the composer open.
   useEffect(() => {
@@ -378,7 +553,10 @@ export default function PosView() {
 
   // Realtime: order status flips (kitchen screen, other terminals) land instantly.
   useRealtime((event) => {
-    if (event === "kot:update") loadOrders();
+    if (event === "kot:update") {
+      loadOrders();
+      loadKots();
+    }
   });
 
   // ── Derived ──
@@ -479,14 +657,24 @@ export default function PosView() {
       }
       if (orderType === "takeaway") payload.guestName = guestName.trim() || "Walk-in Guest";
 
-      const res = await api<{ order: OrderT }>("/api/pos/orders", {
+      const res = await api<{
+        order: OrderT;
+        kotBroadcast?: { recipients: number; sent: number; failed: number; skipped: string } | null;
+      }>("/api/pos/orders", {
         method: "POST",
         body: JSON.stringify(payload),
       });
       setCart([]);
+      const kb = res.kotBroadcast;
+      setSuccessKotNote(
+        kb && kb.sent > 0
+          ? `KOT broadcast to ${kb.sent} WhatsApp number${kb.sent === 1 ? "" : "s"}${kb.failed > 0 ? ` · ${kb.failed} failed` : ""}`
+          : ""
+      );
       setSuccessOrder(res.order);
       toast({ title: `Order ${res.order.orderNumber} sent to kitchen` });
       loadOrders();
+      loadKots();
     } catch (e) {
       toast({ title: "Could not send order", description: errMsg(e), variant: "destructive" });
     } finally {
@@ -550,6 +738,54 @@ export default function PosView() {
       loadOrders();
     } catch (e) {
       toast({ title: "Cancel failed", description: errMsg(e), variant: "destructive" });
+    }
+  };
+
+  // ── KOT display actions (same feeds as the Kitchen Display) ──
+  const advanceKotItem = async (o: KotOrderT, item: KotItemT) => {
+    const next = KOT_ITEM_NEXT[item.status];
+    if (!next || kotBusyId) return;
+    setKotBusyId(item.id);
+    try {
+      await api(`/api/pos/items/${item.id}`, { method: "PATCH", body: JSON.stringify({ status: next }) });
+      await loadKots();
+    } catch (e) {
+      toast({ title: "Could not update item", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setKotBusyId(null);
+    }
+  };
+
+  const kotAllReady = async (o: KotOrderT) => {
+    const targets = o.items.filter((i) => i.status === "pending" || i.status === "preparing");
+    if (targets.length === 0 || kotBusyId) return;
+    setKotBusyId(o.id);
+    try {
+      await Promise.all(
+        targets.map((i) => api(`/api/pos/items/${i.id}`, { method: "PATCH", body: JSON.stringify({ status: "ready" }) }))
+      );
+      toast({ title: `${o.orderNumber} — all items ready` });
+      await loadKots();
+    } catch (e) {
+      toast({ title: "Could not update items", description: errMsg(e), variant: "destructive" });
+      await loadKots();
+    } finally {
+      setKotBusyId(null);
+    }
+  };
+
+  const kotServed = async (o: KotOrderT) => {
+    if (kotBusyId) return;
+    setKotBusyId(o.id);
+    try {
+      await api(`/api/pos/orders/${o.id}`, { method: "PATCH", body: JSON.stringify({ status: "served" }) });
+      toast({ title: `${o.orderNumber} marked served` });
+      await loadKots();
+      loadOrders();
+    } catch (e) {
+      toast({ title: "Could not update order", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setKotBusyId(null);
     }
   };
 
@@ -713,11 +949,53 @@ export default function PosView() {
     <div className="space-y-4">
       <style>{`@media print { body * { visibility: hidden !important; } #kot-print, #kot-print * { visibility: visible !important; } #kot-print { position: fixed; inset: 0; padding: 24px; background: #fff; z-index: 9999; } }`}</style>
 
+      {/* ── POS sections: Ordering | KOT Display ── */}
+      <div className="panel inline-flex flex-wrap items-center gap-1 p-1.5" role="tablist" aria-label="POS sections">
+        {([
+          { key: "order", label: "Ordering", icon: Utensils },
+          { key: "kot", label: "KOT Display", icon: ChefHat },
+        ] as const).map((t) => {
+          const active = posTab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setPosTab(t.key)}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-md px-4 h-10 text-sm font-medium transition",
+                active ? "bg-pine-700 text-panel shadow-sm" : "text-pine-700 hover:bg-plaster-deep/60"
+              )}
+            >
+              <t.icon className={cn("h-4 w-4", active ? "text-brass-light" : "text-brass")} />
+              {t.label}
+              {t.key === "kot" && (
+                <span
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[11px] tabular-nums",
+                    active
+                      ? "bg-white/15 text-panel"
+                      : kots.length > 0
+                        ? "bg-brass/15 text-brass"
+                        : "bg-plaster-deep/70 text-muted-ink"
+                  )}
+                >
+                  {kots.length}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {posTab === "order" ? (
+        <>
       <div className="grid xl:grid-cols-3 gap-4 items-start">
         {/* ── Left: menu ── */}
         <div className="xl:col-span-2">
-          <div className="panel">
-            <div className="panel-header flex-wrap">
+          <div className="panel flex flex-col xl:h-[calc(100vh-11rem)]">
+            <div className="panel-header flex-wrap shrink-0">
               <div className="flex items-center gap-3">
                 <p className="panel-title">Menu</p>
                 <span className="text-xs text-muted-ink">{visibleItems.length} items</span>
@@ -740,7 +1018,7 @@ export default function PosView() {
               </div>
             </div>
 
-            <div className="px-3 pt-3">
+            <div className="px-3 pt-3 shrink-0">
               <Tabs value={cat} onValueChange={setCat}>
                 <TabsList className="flex-wrap h-auto">
                   {CATEGORY_TABS.map((c) => (
@@ -752,7 +1030,7 @@ export default function PosView() {
               </Tabs>
             </div>
 
-            <div className="p-3">
+            <div className="min-h-0 flex-1 overflow-y-auto scroll-slim p-3 max-h-[62vh] xl:max-h-none">
               {visibleItems.length === 0 ? (
                 <p className="py-10 text-center text-sm text-muted-ink">No dishes match this filter.</p>
               ) : (
@@ -895,8 +1173,8 @@ export default function PosView() {
                 </div>
               )}
 
-              {/* Cart lines */}
-              <div className="divide-y divide-line border-y border-line">
+              {/* Cart lines — capped so Totals + Send stay on screen for long orders */}
+              <div className="divide-y divide-line border-y border-line max-h-[300px] overflow-y-auto scroll-slim">
                 {cart.length === 0 && (
                   <p className="py-6 text-center text-sm text-muted-ink">
                     Tap menu items to build the order.
@@ -1072,6 +1350,55 @@ export default function PosView() {
           </table>
         </div>
       </div>
+        </>
+      ) : (
+        /* ── KOT Display — live kitchen tickets inside the POS ── */
+        <section className="space-y-4" aria-label="Kitchen order tickets">
+          <div className="panel flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-md bg-pine-700 text-panel">
+                <ChefHat className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-ink">Live kitchen queue</p>
+                <p className="text-sm text-muted-ink">
+                  {kots.length} pending ticket{kots.length === 1 ? "" : "s"} · auto-refreshes every 15s
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="badge border-line bg-plaster-deep/40 text-muted-ink" title="Same live feed as the Kitchen Display">
+                {kots.reduce((s, o) => s + o.items.length, 0)} items cooking
+              </span>
+              <button className="btn-outline h-9" onClick={loadKots}>
+                <RefreshCw className="h-3.5 w-3.5" /> Refresh
+              </button>
+            </div>
+          </div>
+
+          {kots.length === 0 ? (
+            <div className="panel flex flex-col items-center gap-2 py-14 text-center">
+              <CheckCircle2 className="h-10 w-10 text-ok" />
+              <p className="font-display text-lg font-semibold text-pine">No pending kitchen orders</p>
+              <p className="text-sm text-muted-ink">All caught up — new KOTs land here the moment they are sent.</p>
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {kots.map((o) => (
+                <KotTicket
+                  key={o.id}
+                  o={o}
+                  busyId={kotBusyId}
+                  canAct={canManage}
+                  onAdvance={(it) => advanceKotItem(o, it)}
+                  onAllReady={() => kotAllReady(o)}
+                  onServed={() => kotServed(o)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* ── KOT success dialog ── */}
       <Dialog open={!!successOrder} onOpenChange={(open) => !open && setSuccessOrder(null)}>
@@ -1082,6 +1409,11 @@ export default function PosView() {
             </DialogTitle>
             <DialogDescription>
               KOT printed to the kitchen display. Settle or post to the room folio below.
+              {successKotNote && (
+                <span className="mt-1 flex items-center gap-1.5 text-ok">
+                  <Check className="h-3.5 w-3.5" /> {successKotNote}
+                </span>
+              )}
             </DialogDescription>
           </DialogHeader>
 

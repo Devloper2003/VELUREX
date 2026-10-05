@@ -11,9 +11,9 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.3.2";
+export const APP_VERSION = "2.4.0";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Menu Craft";
+export const APP_RELEASE_CODENAME = "Kitchen Wire";
 export const APP_RELEASE_DATE = "2026-10-05";
 
 export type ReleaseNote = {
@@ -25,6 +25,18 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.4.0",
+    date: "2026-10-05",
+    codename: "Kitchen Wire",
+    highlights: [
+      "KOT Display inside the POS — a new tab shows the live kitchen queue as receipt-style tickets with item-level status chips (tap to advance), All-ready / Served actions, late-ticket highlighting and realtime updates, sharing the exact feed as the Kitchen Display",
+      "KOT WhatsApp broadcast — the moment an order is sent to the kitchen, the full ticket (items, notes, total) is WhatsApped to the property owner(s) and a tenant-managed group list",
+      "Branded ticket images — KOTs are rendered as a pine-and-brass receipt image (item lines, cooking notes, GST total) with a text caption; plain-text format is a one-click switch and the automatic fallback",
+      "KOT broadcast settings — Settings → WhatsApp API gains a step-4 card: on/off switch, image/text format, up to 12 group numbers, live message preview; owner numbers are picked up automatically from admin accounts",
+      "POS menu becomes a true terminal — the dish grid now scrolls inside a fixed-height panel (slim brass scrollbar) so Search, categories and the cart stay put; long carts scroll internally while Totals + Send stay on screen",
+    ],
+  },
   {
     version: "2.3.2",
     date: "2026-10-05",

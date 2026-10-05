@@ -71,6 +71,54 @@ export async function sendViaCloudApi(
         type: "text",
         text: { body },
       }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      return { status: "sent", providerId: data?.messages?.[0]?.id || "" };
+    }
+    return { status: "failed", providerId: "" };
+  } catch {
+    return { status: "failed", providerId: "" };
+  }
+}
+
+/**
+ * Upload a PNG/JPEG to the Meta Cloud API media endpoint and send it as an
+ * image message with a caption. Returns "sent"/"failed" + provider message id.
+ * A failed media upload or send is always a clean "failed" — callers fall back
+ * to the plain-text send.
+ */
+export async function sendViaCloudApiImage(
+  creds: WhatsAppCreds,
+  toPhone: string,
+  image: Buffer,
+  caption: string
+): Promise<{ status: "sent" | "failed"; providerId: string }> {
+  try {
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("file", new Blob([new Uint8Array(image)], { type: "image/png" }), "kot.png");
+    const upRes = await fetch(`https://graph.facebook.com/v18.0/${creds.phoneNumberId}/media`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${creds.accessToken}` },
+      body: form,
+      signal: AbortSignal.timeout(15000),
+    });
+    const upData = (await upRes.json().catch(() => ({}))) as { id?: string };
+    const mediaId = upData.id;
+    if (!upRes.ok || !mediaId) return { status: "failed", providerId: "" };
+
+    const res = await fetch(`https://graph.facebook.com/v18.0/${creds.phoneNumberId}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${creds.accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: toPhone.replace(/\s|\+/g, ""),
+        type: "image",
+        image: { id: mediaId, caption: caption.slice(0, 1024) },
+      }),
+      signal: AbortSignal.timeout(10000),
     });
     const data = await res.json();
     if (res.ok) {
