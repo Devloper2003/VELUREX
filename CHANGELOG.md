@@ -12,6 +12,23 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.3.2] — 2026-10-05 · Menu Craft
+
+### Changed — Menu management redesigned (F&B / POS → Manage)
+- **Two-pane manager replaces the scroll list**: a course rail (All · Starter · Main · Dessert · Beverage · Bar) with live dish counts and a live/sold-out summary sits beside a detail pane — jump straight to a course instead of scrolling one mixed list. On mobile the rail becomes horizontally scrollable chips.
+- **Wider dialog, pinned chrome**: `sm:max-w-3xl` with the header and summary footer always visible and a single clean scroll area (rail stays sticky while the pane scrolls).
+- **Item rows rebuilt**: photo thumb, veg dot, full-width dish names (no more truncation), category chip, ₹-prefixed price field, availability switch with sold-out badge + dimmed row, and admin-only delete — all in one card row with hover feedback.
+- **Inline rename**: click any dish name (pencil affordance on hover) to rename in place — Enter saves, Esc cancels; saved via the existing role-guarded `PATCH /api/menu/[id]`.
+- **Collapsible composer**: the "+ New dish" form now collapses to a button, auto-opens on an empty menu, labels every field (dish name, course, price with ₹ prefix, GST with % suffix, Veg/Non-veg segmented control, description, photo) and auto-jumps the rail to the course you just added. Enter submits from any field.
+
+### Fixed
+- Mobile (≤390px) horizontal overflow: the manager dialog could exceed the viewport and clip row controls (flex `min-width:auto` on the scroll container + grid min-content widths) — fixed with `min-w-0` containment and a wrapping photo/add row. Nothing overflows now.
+
+### Security & data
+- Pure UI reorganization: zero API changes (existing auth-guarded, property-scoped menu endpoints only), zero DB writes beyond the usual item edits, no data in source code, no existing data touched.
+
+---
+
 ## [2.3.1] — 2026-10-05 · Resilience Patch
 
 ### Fixed — production 500s on pre-v2.3.0 databases

@@ -11,9 +11,9 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.3.1";
+export const APP_VERSION = "2.3.2";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Resilience Patch";
+export const APP_RELEASE_CODENAME = "Menu Craft";
 export const APP_RELEASE_DATE = "2026-10-05";
 
 export type ReleaseNote = {
@@ -25,6 +25,17 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.3.2",
+    date: "2026-10-05",
+    codename: "Menu Craft",
+    highlights: [
+      "Menu management redesigned as a two-pane manager — a course rail with live dish counts replaces the cramped endless-scroll list; jump straight to Starters, Mains, Desserts, Beverages or Bar",
+      "Inline dish rename (click any name), ₹-prefixed price editing, clearer live/sold-out states and a live · total · sold-out summary bar",
+      "Collapsible “+ New dish” composer with properly labeled fields (name, course, price, GST %, food type, description, photo) — auto-opens on an empty menu and jumps the rail to the course you just added",
+      "Fully responsive: course rail becomes scrollable chips on mobile, header/footer stay pinned, nothing overflows",
+    ],
+  },
   {
     version: "2.3.1",
     date: "2026-10-05",

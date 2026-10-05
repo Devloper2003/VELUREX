@@ -26,15 +26,22 @@ import { Switch } from "@/components/ui/switch";
 import {
   Banknote,
   Bell,
+  CakeSlice,
   ChefHat,
   CheckCircle2,
+  ChevronUp,
+  Coffee,
   ConciergeBell,
+  CookingPot,
   CreditCard,
   ImagePlus,
+  LayoutGrid,
   Minus,
+  Pencil,
   Plus,
   Printer,
   RefreshCw,
+  Salad,
   Search,
   Send,
   ShoppingBag,
@@ -42,6 +49,7 @@ import {
   Trash2,
   Utensils,
   Wallet,
+  Wine,
   X,
 } from "lucide-react";
 
@@ -120,6 +128,15 @@ const CATEGORY_TABS = [
   { key: "beverage", label: "Beverage" },
   { key: "bar", label: "Bar" },
 ];
+
+const CAT_ICONS: Record<string, typeof Utensils> = {
+  all: LayoutGrid,
+  starter: Salad,
+  main: CookingPot,
+  dessert: CakeSlice,
+  beverage: Coffee,
+  bar: Wine,
+};
 
 const NEXT_STATUS: Record<string, string> = { pending: "preparing", preparing: "served", served: "completed" };
 const NEXT_LABEL: Record<string, string> = { pending: "Start prep", preparing: "Mark served", served: "Complete" };
@@ -294,6 +311,11 @@ export default function PosView() {
   const [sending, setSending] = useState(false);
 
   const [manageOpen, setManageOpen] = useState(false);
+  const [mgCat, setMgCat] = useState("all");
+  const [mgSearch, setMgSearch] = useState("");
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [editingNameId, setEditingNameId] = useState<string | null>(null);
+  const [nameEdits, setNameEdits] = useState<Record<string, string>>({});
   const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
   const [newName, setNewName] = useState("");
   const [newCat, setNewCat] = useState("starter");
@@ -349,6 +371,11 @@ export default function PosView() {
     return () => clearInterval(t);
   }, [loadOrders]);
 
+  // First-run setup: opening the manager on an empty menu pops the composer open.
+  useEffect(() => {
+    if (manageOpen && menu.length === 0) setComposerOpen(true);
+  }, [manageOpen, menu.length]);
+
   // Realtime: order status flips (kitchen screen, other terminals) land instantly.
   useRealtime((event) => {
     if (event === "kot:update") loadOrders();
@@ -365,6 +392,35 @@ export default function PosView() {
         (q === "" || m.name.toLowerCase().includes(q) || m.description.toLowerCase().includes(q))
     );
   }, [menu, cat, search]);
+
+  // ── Menu manager derived: rail stats + filtered pane list ──
+  const railItems = useMemo(() => {
+    const counts: Record<string, { total: number; soldOut: number }> = {};
+    for (const m of menu) {
+      const e = counts[m.category] ?? (counts[m.category] = { total: 0, soldOut: 0 });
+      e.total += 1;
+      if (!m.available) e.soldOut += 1;
+    }
+    const soldOutAll = menu.reduce((s, m) => s + (m.available ? 0 : 1), 0);
+    return CATEGORY_TABS.map((c) => ({
+      key: c.key,
+      label: c.label,
+      total: c.key === "all" ? menu.length : (counts[c.key]?.total ?? 0),
+      soldOut: c.key === "all" ? soldOutAll : (counts[c.key]?.soldOut ?? 0),
+    }));
+  }, [menu]);
+
+  const mgItems = useMemo(() => {
+    const q = mgSearch.trim().toLowerCase();
+    return menu.filter(
+      (m) =>
+        (mgCat === "all" || m.category === mgCat) &&
+        (q === "" || m.name.toLowerCase().includes(q) || m.description.toLowerCase().includes(q))
+    );
+  }, [menu, mgCat, mgSearch]);
+
+  const activeRail = railItems.find((r) => r.key === mgCat) ?? railItems[0];
+  const allStats = railItems.find((r) => r.key === "all") ?? { total: 0, soldOut: 0, key: "all", label: "All" };
 
   const totals = useMemo(() => {
     const subtotal = round2(cart.reduce((s, l) => s + l.price * l.qty, 0));
@@ -504,16 +560,17 @@ export default function PosView() {
       toast({ title: "Name and a positive price are required", variant: "destructive" });
       return;
     }
+    const addedCat = newCat;
     try {
       await api("/api/menu", {
         method: "POST",
         body: JSON.stringify({
           name: newName.trim(),
-          category: newCat,
+          category: addedCat,
           price,
           isVeg: newVeg,
           description: newDesc.trim(),
-          taxRate: Number(newTax) || (newCat === "bar" ? 12 : 5),
+          taxRate: Number(newTax) || (addedCat === "bar" ? 12 : 5),
           imageUrl: newImageUrl || undefined,
         }),
       });
@@ -522,11 +579,44 @@ export default function PosView() {
       setNewPrice("");
       setNewDesc("");
       setNewVeg(true);
-      setNewTax(newCat === "bar" ? "12" : "5");
+      setNewTax(addedCat === "bar" ? "12" : "5");
       setNewImageUrl("");
+      setMgCat(addedCat); // jump the rail so the new dish is visible immediately
       loadMenu();
     } catch (e) {
       toast({ title: "Could not add item", description: errMsg(e), variant: "destructive" });
+    }
+  };
+
+  const openComposer = () => {
+    if (mgCat !== "all") setNewCat(mgCat);
+    setComposerOpen(true);
+  };
+
+  const startRename = (m: MenuItemT) => {
+    setEditingNameId(m.id);
+    setNameEdits((prev) => ({ ...prev, [m.id]: m.name }));
+  };
+
+  const cancelRename = (id: string) => {
+    setEditingNameId(null);
+    setNameEdits((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const saveName = async (m: MenuItemT) => {
+    const raw = (nameEdits[m.id] ?? "").trim();
+    cancelRename(m.id);
+    if (!raw || raw === m.name) return;
+    try {
+      await api(`/api/menu/${m.id}`, { method: "PATCH", body: JSON.stringify({ name: raw }) });
+      toast({ title: "Dish renamed", description: `${m.name} → ${raw}` });
+      loadMenu();
+    } catch (e) {
+      toast({ title: "Rename failed", description: errMsg(e), variant: "destructive" });
     }
   };
 
@@ -1090,115 +1180,451 @@ export default function PosView() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Menu management dialog ── */}
+      {/* ── Menu management dialog — category rail + detail pane ── */}
       <Dialog open={manageOpen} onOpenChange={setManageOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Menu management</DialogTitle>
-            <DialogDescription>Add dishes, edit prices, or mark items sold out.</DialogDescription>
+        <DialogContent className="flex max-h-[92vh] flex-col overflow-hidden sm:max-w-3xl">
+          <DialogHeader className="shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <ChefHat className="h-5 w-5 text-brass" /> Menu management
+            </DialogTitle>
+            <DialogDescription>
+              Organize dishes by course — rename, edit prices, or mark items sold out.
+            </DialogDescription>
           </DialogHeader>
 
-          <div className="border border-line rounded-md p-3 space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-ink">+ New menu item</p>
-            <div className="grid grid-cols-2 gap-2">
-              <input className="field h-10 col-span-2" placeholder="Dish name" value={newName} onChange={(e) => setNewName(e.target.value)} />
-              <Select
-                value={newCat}
-                onValueChange={(v) => {
-                  setNewCat(v);
-                  setNewTax(v === "bar" ? "12" : "5");
-                }}
-              >
-                <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {CATEGORY_TABS.filter((c) => c.key !== "all").map((c) => (
-                    <SelectItem key={c.key} value={c.key}>{c.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <input className="field h-10" type="number" min="1" placeholder="Price ₹" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} />
-              <input className="field h-10" type="number" min="0" max="100" placeholder="GST %" value={newTax} onChange={(e) => setNewTax(e.target.value)} />
-              <div className="flex items-center justify-between rounded-md border border-line-strong px-3 h-10">
-                <span className="text-sm text-muted-ink">{newVeg ? "Veg" : "Non-veg"}</span>
-                <Switch checked={newVeg} onCheckedChange={setNewVeg} />
-              </div>
-              <input className="field h-10 col-span-2" placeholder="Description (optional)" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => openPicker("new")}
-                disabled={imageBusy}
-                title="Add a food photo"
-                aria-label="Add a food photo"
-                className="h-16 w-16 shrink-0 rounded-md border border-dashed border-line-strong grid place-items-center text-muted-ink hover:border-brass hover:text-brass transition disabled:opacity-50 overflow-hidden"
-              >
-                {newImageUrl ? (
-                  <img src={newImageUrl} alt="New dish photo preview" className="h-full w-full object-cover" />
-                ) : (
-                  <span className="flex flex-col items-center gap-0.5">
-                    <ImagePlus className="h-4 w-4" />
-                    <span className="text-[9px] uppercase tracking-wider">Photo</span>
-                  </span>
-                )}
-              </button>
-              <div className="min-w-0 flex-1 text-xs text-muted-ink">
-                <p>Food photo (optional) — compressed to ≤512px before upload.</p>
-                {newImageUrl && (
-                  <button
-                    type="button"
-                    className="btn-ghost h-7 px-2 mt-1 text-danger hover:bg-danger/10"
-                    onClick={() => setNewImageUrl("")}
+          {/* Mobile: category chips */}
+          <div
+            className="md:hidden -mx-1 flex shrink-0 gap-1.5 overflow-x-auto px-1 pb-1 scroll-slim"
+            role="tablist"
+            aria-label="Filter by course"
+          >
+            {railItems.map((r) => {
+              const Icon = CAT_ICONS[r.key] ?? Utensils;
+              const active = mgCat === r.key;
+              return (
+                <button
+                  key={r.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setMgCat(r.key)}
+                  className={cn(
+                    "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition",
+                    active
+                      ? "border-pine-700 bg-pine-700 text-panel"
+                      : "border-line-strong bg-panel text-pine-700 hover:bg-plaster-deep/50"
+                  )}
+                >
+                  <Icon className={cn("h-3.5 w-3.5", active ? "text-brass-light" : "text-brass")} />
+                  {r.label}
+                  <span
+                    className={cn(
+                      "rounded-full px-1.5 text-[10px] tabular-nums",
+                      active ? "bg-white/15 text-panel" : "bg-plaster-deep/70 text-muted-ink"
+                    )}
                   >
-                    <X className="h-3.5 w-3.5" /> Remove photo
-                  </button>
-                )}
-                {imageBusy && pickingFor === "new" && <p className="text-brass mt-1">Uploading…</p>}
-              </div>
-            </div>
-            <button className="btn-pine w-full h-10" onClick={addMenuItem} disabled={imageBusy}>
-              <Plus className="h-4 w-4" /> Add menu item
-            </button>
+                    {r.total}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
-          <div className="border border-line rounded-md divide-y divide-line max-h-64 overflow-y-auto scroll-slim">
-            {menu.length === 0 && (
-              <p className="px-3 py-6 text-center text-sm text-muted-ink">No items yet — add the first dish above.</p>
-            )}
-            {menu.map((m) => (
-              <div key={m.id} className="flex items-center gap-2 px-3 py-2">
-                <ItemThumb
-                  name={m.name}
-                  isVeg={m.isVeg}
-                  imageUrl={m.imageUrl ?? ""}
-                  busy={imageBusy}
-                  onPick={() => openPicker(m.id)}
-                  onRemove={m.imageUrl ? () => removeItemImage(m) : undefined}
-                />
-                <VegDot isVeg={m.isVeg} />
-                <span className="text-sm font-medium text-ink flex-1 min-w-0 truncate">{m.name}</span>
-                <span className="hidden sm:block text-[11px] text-muted-ink w-14">{m.category}</span>
-                <input
-                  className="field h-9 w-20 sm:w-24 text-right"
-                  type="number"
-                  min="1"
-                  value={priceEdits[m.id] ?? String(m.price)}
-                  onChange={(e) => setPriceEdits((prev) => ({ ...prev, [m.id]: e.target.value }))}
-                  onBlur={() => savePrice(m)}
-                  onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-                />
-                <Switch
-                  checked={m.available}
-                  onCheckedChange={(v) => toggleAvailable(m, v)}
-                  aria-label={`Toggle ${m.name} availability`}
-                />
-                {user?.role === "hotel_admin" && (
-                  <button className="btn-ghost h-9 w-9 px-0 text-danger" title="Delete item" onClick={() => deleteMenuItem(m)}>
-                    <Trash2 className="h-4 w-4" />
+          {/* Scrollable middle — rail pins, pane scrolls */}
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto scroll-slim">
+            <div className="md:grid md:grid-cols-[184px_1fr] md:items-start md:gap-4">
+            {/* Desktop: category rail */}
+            <nav
+              className="hidden md:flex md:flex-col gap-0.5 border-r border-line pr-3 md:sticky md:top-1"
+              aria-label="Menu courses"
+            >
+              {railItems.map((r) => {
+                const Icon = CAT_ICONS[r.key] ?? Utensils;
+                const active = mgCat === r.key;
+                return (
+                  <button
+                    key={r.key}
+                    type="button"
+                    onClick={() => setMgCat(r.key)}
+                    aria-current={active ? "true" : undefined}
+                    title={r.soldOut > 0 ? `${r.total} dishes · ${r.soldOut} sold out` : `${r.total} dishes`}
+                    className={cn(
+                      "flex items-center justify-between gap-2 rounded-md px-2.5 py-2 text-sm transition",
+                      active
+                        ? "bg-pine-700 font-medium text-panel shadow-sm"
+                        : "text-pine-700 hover:bg-plaster-deep/60"
+                    )}
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Icon className={cn("h-4 w-4 shrink-0", active ? "text-brass-light" : "text-brass")} />
+                      <span className="truncate">{r.label}</span>
+                    </span>
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 py-0.5 text-[11px] tabular-nums",
+                        active ? "bg-white/15 text-panel" : "bg-plaster-deep/70 text-muted-ink"
+                      )}
+                    >
+                      {r.total}
+                    </span>
                   </button>
+                );
+              })}
+              <div className="mt-2 space-y-1 border-t border-dashed border-line-strong px-2.5 pt-2">
+                <p className="flex items-center gap-1.5 text-[11px] text-muted-ink">
+                  <span className="h-1.5 w-1.5 rounded-full bg-ok" />
+                  {allStats.total - allStats.soldOut} live
+                </p>
+                {allStats.soldOut > 0 && (
+                  <p className="flex items-center gap-1.5 text-[11px] text-muted-ink">
+                    <span className="h-1.5 w-1.5 rounded-full bg-warn" />
+                    {allStats.soldOut} sold out
+                  </p>
                 )}
               </div>
-            ))}
+            </nav>
+
+            {/* Detail pane */}
+            <div className="min-w-0">
+              <div className="mb-2.5 flex items-center gap-2">
+                <div className="relative min-w-0 flex-1">
+                  <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-ink" />
+                  <input
+                    className="field pl-8"
+                    placeholder={mgCat === "all" ? "Search all dishes…" : `Search ${activeRail.label.toLowerCase()} dishes…`}
+                    value={mgSearch}
+                    onChange={(e) => setMgSearch(e.target.value)}
+                    aria-label="Search dishes"
+                  />
+                </div>
+                <button
+                  type="button"
+                  className={cn("h-9 shrink-0", composerOpen ? "btn-outline" : "btn-pine")}
+                  onClick={() => (composerOpen ? setComposerOpen(false) : openComposer())}
+                >
+                  {composerOpen ? (
+                    <>
+                      <ChevronUp className="h-4 w-4" /> Close form
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4" /> New dish
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Collapsible composer */}
+              {composerOpen && (
+                <div className="mb-3 space-y-2.5 rounded-lg border border-line bg-plaster/40 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-pine-700">
+                      <Plus className="h-3.5 w-3.5 text-brass" /> New menu item
+                    </p>
+                    {mgCat !== "all" && (
+                      <span className="text-[11px] text-muted-ink">
+                        will be added to <span className="font-medium text-ink">{activeRail.label}</span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid min-w-0 grid-cols-2 gap-2">
+                    <div className="col-span-2 min-w-0">
+                      <label className="field-label" htmlFor="new-dish-name">
+                        Dish name
+                      </label>
+                      <input
+                        id="new-dish-name"
+                        className="field h-10"
+                        placeholder="e.g. Paneer Tikka"
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && addMenuItem()}
+                        autoFocus
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <label className="field-label">Course</label>
+                      <Select
+                        value={newCat}
+                        onValueChange={(v) => {
+                          setNewCat(v);
+                          setNewTax(v === "bar" ? "12" : "5");
+                        }}
+                      >
+                        <SelectTrigger className="h-10 w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CATEGORY_TABS.filter((c) => c.key !== "all").map((c) => (
+                            <SelectItem key={c.key} value={c.key}>
+                              {c.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="min-w-0">
+                      <label className="field-label" htmlFor="new-dish-price">
+                        Price
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-ink">₹</span>
+                        <input
+                          id="new-dish-price"
+                          className="field h-10 pl-7"
+                          type="number"
+                          min="1"
+                          placeholder="0"
+                          value={newPrice}
+                          onChange={(e) => setNewPrice(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && addMenuItem()}
+                        />
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <label className="field-label" htmlFor="new-dish-tax">
+                        GST
+                      </label>
+                      <div className="relative">
+                        <input
+                          id="new-dish-tax"
+                          className="field h-10 pr-7"
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={newTax}
+                          onChange={(e) => setNewTax(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && addMenuItem()}
+                        />
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-ink">
+                          %
+                        </span>
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <span className="field-label">Food type</span>
+                      <div className="grid h-10 grid-cols-2 gap-1 rounded-md border border-line-strong bg-panel p-1">
+                        <button
+                          type="button"
+                          onClick={() => setNewVeg(true)}
+                          aria-pressed={newVeg}
+                          className={cn(
+                            "rounded border text-xs font-medium transition",
+                            newVeg
+                              ? "border-ok/40 bg-ok/15 text-ok"
+                              : "border-transparent text-muted-ink hover:bg-plaster-deep/50"
+                          )}
+                        >
+                          Veg
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewVeg(false)}
+                          aria-pressed={!newVeg}
+                          className={cn(
+                            "rounded border text-xs font-medium transition",
+                            !newVeg
+                              ? "border-danger/40 bg-danger/10 text-danger"
+                              : "border-transparent text-muted-ink hover:bg-plaster-deep/50"
+                          )}
+                        >
+                          Non-veg
+                        </button>
+                      </div>
+                    </div>
+                    <div className="col-span-2 min-w-0">
+                      <label className="field-label" htmlFor="new-dish-desc">
+                        Description <span className="normal-case text-muted-ink/70">(optional)</span>
+                      </label>
+                      <input
+                        id="new-dish-desc"
+                        className="field h-10"
+                        placeholder="Short line shown on menus and bills"
+                        value={newDesc}
+                        onChange={(e) => setNewDesc(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && addMenuItem()}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => openPicker("new")}
+                      disabled={imageBusy}
+                      title="Add a food photo"
+                      aria-label="Add a food photo"
+                      className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-md border border-dashed border-line-strong text-muted-ink transition hover:border-brass hover:text-brass disabled:opacity-50"
+                    >
+                      {newImageUrl ? (
+                        <img src={newImageUrl} alt="New dish photo preview" className="h-full w-full object-cover" />
+                      ) : (
+                        <span className="flex flex-col items-center gap-0.5">
+                          <ImagePlus className="h-4 w-4" />
+                          <span className="text-[9px] uppercase tracking-wider">Photo</span>
+                        </span>
+                      )}
+                    </button>
+                    <div className="min-h-10 min-w-40 flex-1 text-xs text-muted-ink">
+                      <p>Food photo (optional) — compressed to ≤512px before upload.</p>
+                      {newImageUrl && (
+                        <button
+                          type="button"
+                          className="btn-ghost mt-1 h-7 px-2 text-danger hover:bg-danger/10"
+                          onClick={() => setNewImageUrl("")}
+                        >
+                          <X className="h-3.5 w-3.5" /> Remove photo
+                        </button>
+                      )}
+                      {imageBusy && pickingFor === "new" && <p className="mt-1 text-brass">Uploading…</p>}
+                    </div>
+                    <button type="button" className="btn-pine h-10 shrink-0" onClick={addMenuItem} disabled={imageBusy}>
+                      <Plus className="h-4 w-4" /> Add item
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Item rows */}
+              <div className="space-y-1.5" role="list" aria-label="Menu items">
+                {mgItems.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-line-strong px-4 py-8 text-center">
+                    {menu.length === 0 ? (
+                      <>
+                        <ChefHat className="mx-auto h-8 w-8 text-muted-ink/50" />
+                        <p className="mt-2 text-sm font-medium text-ink">Your menu is empty</p>
+                        <p className="mt-1 text-xs text-muted-ink">
+                          Add your first dish — a name, price and course is all it takes.
+                        </p>
+                        {!composerOpen && (
+                          <button type="button" className="btn-pine mt-3 h-9" onClick={openComposer}>
+                            <Plus className="h-4 w-4" /> Add first dish
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <Search className="mx-auto h-8 w-8 text-muted-ink/50" />
+                        <p className="mt-2 text-sm font-medium text-ink">No dishes match</p>
+                        <p className="mt-1 text-xs text-muted-ink">Try a different search or course filter.</p>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  mgItems.map((m) => (
+                    <div
+                      key={m.id}
+                      role="listitem"
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-lg border border-line bg-panel px-2.5 py-2 transition hover:border-brass/50",
+                        !m.available && "opacity-60"
+                      )}
+                    >
+                      <ItemThumb
+                        name={m.name}
+                        isVeg={m.isVeg}
+                        imageUrl={m.imageUrl ?? ""}
+                        busy={imageBusy}
+                        onPick={() => openPicker(m.id)}
+                        onRemove={m.imageUrl ? () => removeItemImage(m) : undefined}
+                      />
+                      <VegDot isVeg={m.isVeg} />
+                      <div className="min-w-0 flex-1">
+                        {editingNameId === m.id ? (
+                          <input
+                            autoFocus
+                            className="field h-8"
+                            value={nameEdits[m.id] ?? m.name}
+                            onChange={(e) => setNameEdits((prev) => ({ ...prev, [m.id]: e.target.value }))}
+                            onBlur={() => saveName(m)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                              if (e.key === "Escape") cancelRename(m.id);
+                            }}
+                            aria-label={`Rename ${m.name}`}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => startRename(m)}
+                            title="Click to rename"
+                            className="group/nm flex max-w-full items-center gap-1 text-left"
+                          >
+                            <span className="truncate text-sm font-medium text-ink">{m.name}</span>
+                            <Pencil className="h-3 w-3 shrink-0 text-muted-ink opacity-0 transition group-hover/nm:opacity-70" />
+                          </button>
+                        )}
+                        <div className="mt-0.5 flex items-center gap-1.5">
+                          {mgCat === "all" && (
+                            <span className="badge border-line bg-plaster-deep/40 text-[10px] uppercase tracking-wide text-muted-ink">
+                              {m.category}
+                            </span>
+                          )}
+                          {!m.available && (
+                            <span className="badge border-warn/40 bg-warn/10 text-[10px] text-warn">Sold out</span>
+                          )}
+                          {m.description && (
+                            <span className="hidden truncate text-[11px] text-muted-ink sm:inline">{m.description}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="relative shrink-0">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-ink">₹</span>
+                        <input
+                          className="field h-9 w-20 pl-6 pr-2 text-right sm:w-24"
+                          type="number"
+                          min="1"
+                          aria-label={`Price for ${m.name}`}
+                          value={priceEdits[m.id] ?? String(m.price)}
+                          onChange={(e) => setPriceEdits((prev) => ({ ...prev, [m.id]: e.target.value }))}
+                          onBlur={() => savePrice(m)}
+                          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+                        />
+                      </div>
+                      <Switch
+                        checked={m.available}
+                        onCheckedChange={(v) => toggleAvailable(m, v)}
+                        aria-label={`Toggle ${m.name} availability`}
+                      />
+                      {user?.role === "hotel_admin" && (
+                        <button
+                          className="btn-ghost h-9 w-9 shrink-0 px-0 text-danger"
+                          title="Delete item"
+                          aria-label={`Delete ${m.name}`}
+                          onClick={() => deleteMenuItem(m)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+            </div>
+          </div>
+
+          {/* Footer summary */}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-line pt-3">
+            <p className="flex flex-wrap items-center gap-2 text-xs text-muted-ink">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-ok" />
+                <span className="font-medium text-ink">{allStats.total - allStats.soldOut}</span> live
+              </span>
+              <span className="text-line-strong">·</span>
+              <span>{allStats.total} total</span>
+              {allStats.soldOut > 0 && (
+                <>
+                  <span className="text-line-strong">·</span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-warn" />
+                    {allStats.soldOut} sold out
+                  </span>
+                </>
+              )}
+            </p>
+            <button type="button" className="btn-pine h-9 px-6" onClick={() => setManageOpen(false)}>
+              Done
+            </button>
           </div>
         </DialogContent>
       </Dialog>
