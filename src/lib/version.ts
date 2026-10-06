@@ -11,10 +11,10 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.5.0";
+export const APP_VERSION = "2.6.0";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "White Label";
-export const APP_RELEASE_DATE = "2026-10-05";
+export const APP_RELEASE_CODENAME = "Golden Ticket";
+export const APP_RELEASE_DATE = "2026-10-06";
 
 export type ReleaseNote = {
   version: string;
@@ -25,6 +25,17 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.6.0",
+    date: "2026-10-06",
+    codename: "Golden Ticket",
+    highlights: [
+      "Invoice & details on every reservation — each row in the Reservations desk now carries an actions menu; “Invoice & Details” opens the full white-labeled GST tax invoice for any booking (open or checked-out) with in-app view, print and one-click HTML download",
+      "One shared invoice format — a new shared invoice document (InvoiceDoc + invoice-format) now powers folio bills, group bills and reservation invoices alike, so every surface renders the identical white-labeled GST format: numbered line items, CGST/SGST summary, amount in words, declaration and authorised signatory",
+      "Refined kitchen tickets — the KOT receipt is redesigned around one shared component used by both the “order sent” dialog and the order detail sheet: property masthead with a brass rule, giant order number, where/when strip, a brass quantity column with hanging cooking notes and a subtotal · GST · total footer",
+      "Richer KOT WhatsApp broadcasts — ticket images gain a brass underline rule, an “ITEMS · N” counter, brass quantity figures and an itemised Subtotal / GST / TOTAL block; text broadcasts now carry the same subtotal + GST breakdown",
+    ],
+  },
   {
     version: "2.5.0",
     date: "2026-10-05",

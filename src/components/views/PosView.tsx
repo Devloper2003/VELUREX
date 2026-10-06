@@ -350,12 +350,56 @@ function KotItemChip({
   );
 }
 
-/** White-label property line for KOT printouts — the tenant brand, never the platform name. */
-function KotBrandLine({ propertyName }: { propertyName: string }) {
+/**
+ * White-labeled kitchen ticket — one shared receipt format for the "order sent"
+ * dialog (#kot-print) and the order-detail sheet (#kot-print-detail).
+ * Header: property name + ticket class + big order number · items with a brass
+ * qty column and hanging notes · subtotal/GST/total footer. No platform brand.
+ */
+function KotReceipt({ id, order, propertyName }: { id: string; order: OrderT; propertyName: string }) {
   return (
-    <p className="text-[10px] uppercase tracking-[0.2em] text-muted-ink">
-      {propertyName || "Restaurant"} · Kitchen Order Ticket
-    </p>
+    <div id={id} className="rounded-md border border-line bg-panel p-4 font-mono text-sm space-y-2.5">
+      <div className="text-center space-y-1">
+        <p className="font-display text-[13px] font-semibold uppercase tracking-[0.18em] text-pine">
+          {propertyName || "Restaurant"}
+        </p>
+        <p className="text-[9px] font-semibold uppercase tracking-[0.32em] text-brass">Kitchen Order Ticket</p>
+        <p className="font-display text-3xl font-bold text-pine tracking-wide">{order.orderNumber}</p>
+        <p className="text-xs text-muted-ink">
+          {fmtTime(order.createdAt)} ·{" "}
+          {order.orderType === "dine_in"
+            ? `Table ${order.tableNumber || "—"}`
+            : order.orderType === "room_service"
+              ? `Room ${order.roomNumber || "—"}`
+              : "Takeaway"}
+        </p>
+      </div>
+      <div className="border-t border-dashed border-line-strong pt-2.5 space-y-2">
+        {order.items.map((i) => (
+          <div key={i.id} className="leading-tight">
+            <div className="flex items-baseline gap-2.5">
+              <span className="w-7 shrink-0 text-right font-bold text-brass">{i.qty}×</span>
+              <span className="min-w-0 flex-1">{i.name}</span>
+            </div>
+            {i.notes && <p className="pl-[42px] text-xs font-medium text-warn italic">↳ {i.notes}</p>}
+          </div>
+        ))}
+      </div>
+      <div className="border-t border-dashed border-line-strong pt-2 space-y-1">
+        <div className="flex justify-between text-xs text-muted-ink">
+          <span>Subtotal</span>
+          <span>{inr(order.subtotal, { decimals: true })}</span>
+        </div>
+        <div className="flex justify-between text-xs text-muted-ink">
+          <span>GST</span>
+          <span>{inr(order.taxAmount, { decimals: true })}</span>
+        </div>
+        <div className="flex justify-between border-t border-line pt-1.5">
+          <span className="text-xs uppercase tracking-wider">Total (incl. GST)</span>
+          <span className="font-bold text-pine">{inr(order.totalAmount, { decimals: true })}</span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1291,34 +1335,7 @@ export default function PosView() {
 
           {successOrder && (
             <>
-              <div id="kot-print" className="rounded-md border border-line bg-panel p-4 font-mono text-sm space-y-2">
-                <div className="text-center space-y-0.5">
-                  <KotBrandLine propertyName={propertyName} />
-                  <p className="text-2xl font-bold text-pine">{successOrder.orderNumber}</p>
-                  <p className="text-xs text-muted-ink">
-                    {fmtTime(successOrder.createdAt)} ·{" "}
-                    {successOrder.orderType === "dine_in"
-                      ? `Table ${successOrder.tableNumber || "—"}`
-                      : successOrder.orderType === "room_service"
-                        ? `Room ${successOrder.roomNumber}`
-                        : "Takeaway"}
-                  </p>
-                </div>
-                <div className="border-t border-dashed border-line-strong pt-2 space-y-1">
-                  {successOrder.items.map((i) => (
-                    <div key={i.id} className="flex items-baseline justify-between gap-2">
-                      <span>
-                        <span className="font-bold">{i.qty}×</span> {i.name}
-                      </span>
-                      {i.notes && <span className="text-xs text-warn italic">{i.notes}</span>}
-                    </div>
-                  ))}
-                </div>
-                <div className="border-t border-dashed border-line-strong pt-2 flex items-center justify-between">
-                  <span className="text-xs uppercase tracking-wider text-muted-ink">Total (incl. GST)</span>
-                  <span className="font-bold">{inr(successOrder.totalAmount, { decimals: true })}</span>
-                </div>
-              </div>
+              <KotReceipt id="kot-print" order={successOrder} propertyName={propertyName} />
 
               <div className="grid grid-cols-2 gap-2">
                 <button className="btn-outline h-10" onClick={() => window.print()}>
@@ -1496,34 +1513,7 @@ export default function PosView() {
               </div>
 
               {/* KOT receipt (printable) */}
-              <div id="kot-print-detail" className="rounded-md border border-dashed border-line-strong bg-panel p-4 font-mono text-sm space-y-2">
-                <div className="text-center space-y-0.5">
-                  <KotBrandLine propertyName={propertyName} />
-                  <p className="text-2xl font-bold text-pine">{detailOrder.orderNumber}</p>
-                  <p className="text-xs text-muted-ink">
-                    {fmtTime(detailOrder.createdAt)} ·{" "}
-                    {detailOrder.orderType === "dine_in"
-                      ? `Table ${detailOrder.tableNumber || "—"}`
-                      : detailOrder.orderType === "room_service"
-                        ? `Room ${detailOrder.roomNumber}`
-                        : "Takeaway"}
-                  </p>
-                </div>
-                <div className="border-t border-dashed border-line-strong pt-2 space-y-1">
-                  {detailOrder.items.map((i) => (
-                    <div key={i.id} className="flex items-baseline justify-between gap-2">
-                      <span>
-                        <span className="font-bold">{i.qty}×</span> {i.name}
-                      </span>
-                      {i.notes && <span className="text-xs text-warn italic">{i.notes}</span>}
-                    </div>
-                  ))}
-                </div>
-                <div className="border-t border-dashed border-line-strong pt-2 flex items-center justify-between">
-                  <span className="text-xs uppercase tracking-wider text-muted-ink">Total (incl. GST)</span>
-                  <span className="font-bold">{inr(detailOrder.totalAmount, { decimals: true })}</span>
-                </div>
-              </div>
+              <KotReceipt id="kot-print-detail" order={detailOrder} propertyName={propertyName} />
 
               {/* Kitchen + billing actions */}
               <div className="grid grid-cols-2 gap-2">

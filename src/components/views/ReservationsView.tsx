@@ -12,6 +12,8 @@ import {
   Download, ChevronDown, Wallet,
 } from "lucide-react";
 import { receiptHtml, type ReceiptPayload } from "@/lib/receipt-html";
+import { invoiceHtml, type InvoicePayload } from "@/lib/invoice-format";
+import { InvoiceDoc } from "@/components/shared/InvoiceDoc";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -248,6 +250,12 @@ export default function ReservationsView() {
   const [groupOpen, setGroupOpen] = useState<string | null>(null); // group code
   const [property, setProperty] = useState<PropertyLite>(FALLBACK_PROPERTY);
 
+  // Invoice & details dialog — available on every row (incl. checked-out)
+  const [invoiceRes, setInvoiceRes] = useState<Reservation | null>(null);
+  const [invoiceData, setInvoiceData] = useState<InvoicePayload | null>(null);
+  const [invoiceLoading, setInvoiceLoading] = useState(false);
+  const [invoiceError, setInvoiceError] = useState("");
+
   // Property details (address/GSTIN) enrich the printable registration card
   useEffect(() => {
     api<{ property: PropertyLite }>("/api/settings")
@@ -344,6 +352,44 @@ export default function ReservationsView() {
     }
   }
 
+  // Fetch the white-labeled GST invoice whenever a row's invoice action opens
+  useEffect(() => {
+    if (!invoiceRes) {
+      setInvoiceData(null);
+      setInvoiceError("");
+      return;
+    }
+    let cancelled = false;
+    setInvoiceLoading(true);
+    setInvoiceError("");
+    setInvoiceData(null);
+    api<InvoicePayload>(`/api/invoice/${invoiceRes.id}`)
+      .then((d) => {
+        if (!cancelled) setInvoiceData(d);
+      })
+      .catch((e) => {
+        if (!cancelled) setInvoiceError(e instanceof Error ? e.message : "Could not load the invoice");
+      })
+      .finally(() => {
+        if (!cancelled) setInvoiceLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [invoiceRes]);
+
+  function downloadInvoice() {
+    if (!invoiceData) return;
+    const blob = new Blob([invoiceHtml(invoiceData)], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${invoiceData.invoiceNo}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast({ title: "Invoice downloaded", description: `${invoiceData.invoiceNo} · ${invoiceData.hotel.name}` });
+  }
+
   if (loading) {
     return (
       <div className="panel p-6 space-y-3">
@@ -354,6 +400,8 @@ export default function ReservationsView() {
 
   return (
     <div className="space-y-4">
+      {/* Invoice print isolation — only the invoice sheet leaves the printer */}
+      <style>{`@media print { body * { visibility: hidden !important; } #inv-print, #inv-print * { visibility: visible !important; } #inv-print { position: fixed; inset: 0; padding: 24px; background: #fff; z-index: 9999; overflow: visible; } }`}</style>
       {/* Toolbar */}
       <div className="panel px-4 py-3 flex flex-col lg:flex-row lg:items-center gap-3">
         <div className="relative lg:w-72">
@@ -468,43 +516,58 @@ export default function ReservationsView() {
                     <span className={cn("badge", STATUS_BADGE[r.status])}>{STATUS_LABELS[r.status] ?? r.status}</span>
                   </td>
                   <td className="td text-right">
-                    {canAct && ["confirmed", "hold", "checked_in"].includes(r.status) ? (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button className="btn-ghost px-2 h-7" aria-label={`Actions for ${r.confirmationNumber}`}>
-                            <MoreHorizontal className="h-4 w-4" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-44">
-                          {["confirmed", "hold"].includes(r.status) && (
-                            <DropdownMenuItem onClick={() => setCheckInRes(r)} className="gap-2">
-                              <LogIn className="h-3.5 w-3.5 text-ok" /> Check In
+                    {canAct ? (
+                      ["confirmed", "hold", "checked_in"].includes(r.status) ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button className="btn-ghost px-2 h-7" aria-label={`Actions for ${r.confirmationNumber}`}>
+                              <MoreHorizontal className="h-4 w-4" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-48">
+                            <DropdownMenuItem onClick={() => setInvoiceRes(r)} className="gap-2">
+                              <ReceiptIndianRupee className="h-3.5 w-3.5 text-brass" /> Invoice &amp; Details
                             </DropdownMenuItem>
-                          )}
-                          {r.status === "checked_in" && (
-                            <DropdownMenuItem onClick={() => setCheckOutRes(r)} className="gap-2">
-                              <LogOut className="h-3.5 w-3.5 text-warn" /> Check Out
+                            <DropdownMenuSeparator />
+                            {["confirmed", "hold"].includes(r.status) && (
+                              <DropdownMenuItem onClick={() => setCheckInRes(r)} className="gap-2">
+                                <LogIn className="h-3.5 w-3.5 text-ok" /> Check In
+                              </DropdownMenuItem>
+                            )}
+                            {r.status === "checked_in" && (
+                              <DropdownMenuItem onClick={() => setCheckOutRes(r)} className="gap-2">
+                                <LogOut className="h-3.5 w-3.5 text-warn" /> Check Out
+                              </DropdownMenuItem>
+                            )}
+                            {r.status === "hold" && (
+                              <DropdownMenuItem onClick={() => confirmHold(r)} className="gap-2">
+                                <CheckCheck className="h-3.5 w-3.5 text-ok" /> Confirm Hold
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem onClick={() => setModifyRes(r)} className="gap-2">
+                              <Pencil className="h-3.5 w-3.5" /> Modify
                             </DropdownMenuItem>
-                          )}
-                          {r.status === "hold" && (
-                            <DropdownMenuItem onClick={() => confirmHold(r)} className="gap-2">
-                              <CheckCheck className="h-3.5 w-3.5 text-ok" /> Confirm Hold
+                            <DropdownMenuItem onClick={() => printRegistrationCards([r], property, user?.name ?? "Front Desk")} className="gap-2">
+                              <Printer className="h-3.5 w-3.5 text-brass" /> Print Reg. Card
                             </DropdownMenuItem>
-                          )}
-                          <DropdownMenuItem onClick={() => setModifyRes(r)} className="gap-2">
-                            <Pencil className="h-3.5 w-3.5" /> Modify
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => printRegistrationCards([r], property, user?.name ?? "Front Desk")} className="gap-2">
-                            <Printer className="h-3.5 w-3.5 text-brass" /> Print Reg. Card
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          {r.status !== "checked_in" && (
-                            <DropdownMenuItem onClick={() => setCancelRes(r)} className="gap-2 text-danger focus:text-danger">
-                              <XCircle className="h-3.5 w-3.5" /> Cancel
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                            <DropdownMenuSeparator />
+                            {r.status !== "checked_in" && (
+                              <DropdownMenuItem onClick={() => setCancelRes(r)} className="gap-2 text-danger focus:text-danger">
+                                <XCircle className="h-3.5 w-3.5" /> Cancel
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : (
+                        <button
+                          className="btn-outline h-7 px-2.5 text-xs gap-1.5"
+                          onClick={() => setInvoiceRes(r)}
+                          aria-label={`View invoice and details for ${r.confirmationNumber}`}
+                          title="View invoice & stay details"
+                        >
+                          <ReceiptIndianRupee className="h-3.5 w-3.5 text-brass" /> Invoice
+                        </button>
+                      )
                     ) : (
                       <span className="text-muted-ink text-xs">—</span>
                     )}
@@ -571,6 +634,80 @@ export default function ReservationsView() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Invoice & details — openable from any reservation row (incl. checked-out) */}
+      <Dialog open={!!invoiceRes} onOpenChange={(o) => !o && setInvoiceRes(null)}>
+        <DialogContent className="sm:max-w-3xl max-h-[92vh] overflow-y-auto scroll-slim">
+          <DialogHeader>
+            <DialogTitle className="font-display text-pine">
+              Invoice &amp; Details {invoiceRes && <span className="font-mono text-sm text-muted-ink">· {invoiceRes.confirmationNumber}</span>}
+            </DialogTitle>
+            <DialogDescription>
+              GST tax invoice and stay summary — print or download the guest copy.
+            </DialogDescription>
+          </DialogHeader>
+
+          {invoiceLoading && (
+            <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-ink">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading invoice…
+            </div>
+          )}
+          {invoiceError && (
+            <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2.5 text-sm text-danger" role="alert">
+              {invoiceError}
+            </div>
+          )}
+
+          {invoiceData && (
+            <>
+              {/* Stay summary strip */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 rounded-md border border-line bg-plaster/40 px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-ink">Guest</p>
+                  <p className="text-[13px] font-medium text-pine truncate" title={invoiceData.billTo.fullName}>{invoiceData.billTo.fullName}</p>
+                  <p className="text-[11px] text-muted-ink">{invoiceData.billTo.phone}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-ink">Room &amp; Stay</p>
+                  <p className="text-[13px] font-medium text-pine">
+                    {invoiceData.reservation.room ? <>Room {invoiceData.reservation.room.number}</> : "Unassigned"}
+                  </p>
+                  <p className="text-[11px] text-muted-ink whitespace-nowrap">
+                    {fmtDate(invoiceData.reservation.checkIn)} → {fmtDate(invoiceData.reservation.checkOut)} · {invoiceData.reservation.nights}N
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-ink">Status</p>
+                  <span className={cn("badge mt-0.5", STATUS_BADGE[invoiceData.reservation.status])}>
+                    {STATUS_LABELS[invoiceData.reservation.status] ?? invoiceData.reservation.status}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-ink">Grand Total</p>
+                  <p className="text-[13px] font-semibold text-pine">{inr(invoiceData.grandTotal, { decimals: true })}</p>
+                  <p className={cn("text-[11px]", invoiceData.balance > 0 ? "text-warn" : "text-ok")}>
+                    {invoiceData.balance > 0 ? `Balance ${inr(invoiceData.balance, { decimals: true })}` : "Fully paid"}
+                  </p>
+                </div>
+              </div>
+
+              <div id="inv-print" className="rounded-md border border-line bg-panel p-4 overflow-x-auto scroll-slim">
+                <InvoiceDoc inv={invoiceData} />
+              </div>
+            </>
+          )}
+
+          <DialogFooter className="gap-2">
+            <button className="btn-ghost h-9" onClick={() => setInvoiceRes(null)}>Close</button>
+            <button className="btn-outline h-9" disabled={!invoiceData} onClick={downloadInvoice}>
+              <Download className="h-4 w-4" /> Download
+            </button>
+            <button className="btn-pine h-9" disabled={!invoiceData} onClick={() => window.print()}>
+              <Printer className="h-4 w-4" /> Print
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

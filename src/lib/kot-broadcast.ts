@@ -163,7 +163,8 @@ export function buildKotText(o: KotBroadcastOrder, propertyName: string): string
     if (i.notes) lines.push(`   ↳ _${i.notes}_`);
   }
   lines.push("──────────────");
-  lines.push(`Items: ${itemCount(o)} · *${inr(o.totalAmount)}* incl. GST`);
+  lines.push(`Items: ${itemCount(o)} · Subtotal ${inr(o.subtotal)} · GST ${inr(o.taxAmount)}`);
+  lines.push(`*Total ${inr(o.totalAmount)}* incl. GST`);
   return lines.join("\n");
 }
 
@@ -225,6 +226,11 @@ const SANS = "DejaVu Sans, sans-serif";
 /**
  * Branded KOT receipt as PNG. Pure presentation — every value comes from the
  * order row, nothing is hard-coded beyond the brand palette.
+ *
+ * Layout: pine header (hotel · KITCHEN ORDER TICKET · big order number, brass
+ * underline rule) → plaster meta strip (where · type | time · date) → items
+ * with a brass qty column and hanging cooking notes → subtotal / GST / TOTAL
+ * block → brass accent bar. White-label: the property's own name only.
  */
 export async function buildKotImage(o: KotBroadcastOrder, propertyName: string): Promise<Buffer> {
   const { default: sharp } = await import("sharp");
@@ -244,10 +250,11 @@ export async function buildKotImage(o: KotBroadcastOrder, propertyName: string):
     0
   );
 
-  const headerH = 104;
-  const metaH = 36;
-  const footH = 44; // total line + bottom padding (platform branding removed — white-label)
-  const height = headerH + metaH + 20 + itemsH + 18 + footH;
+  const headerH = 118;
+  const metaH = 38;
+  const labelH = 38; // "ITEMS · N" label + gap
+  const tailH = 2 + 28 + 20 + 30 + 22 + 6; // divider gap + items/subtotal + GST + TOTAL rows + bottom pad + accent bar
+  const height = headerH + metaH + labelH + itemsH + tailH;
 
   const parts: string[] = [];
   parts.push(
@@ -255,18 +262,19 @@ export async function buildKotImage(o: KotBroadcastOrder, propertyName: string):
   );
   parts.push(`<rect width="${PAGE_W}" height="${height}" fill="#FFFFFF"/>`);
 
-  // Header band
+  // Header band + brass underline rule
   parts.push(`<rect width="${PAGE_W}" height="${headerH}" fill="${PINE}"/>`);
+  parts.push(`<rect y="${headerH - 3}" width="${PAGE_W}" height="3" fill="${BRASS}"/>`);
   parts.push(
-    `<text x="${PAGE_W / 2}" y="30" text-anchor="middle" font-family="${SANS}" font-size="15" font-weight="bold" fill="${BRASS_SOFT}" letter-spacing="1.5">${xmlEsc(
+    `<text x="${PAGE_W / 2}" y="32" text-anchor="middle" font-family="${SANS}" font-size="15" font-weight="bold" fill="${BRASS_SOFT}" letter-spacing="1.5">${xmlEsc(
       propertyName.toUpperCase()
     )}</text>`
   );
   parts.push(
-    `<text x="${PAGE_W / 2}" y="50" text-anchor="middle" font-family="${SANS}" font-size="9.5" fill="#8FA6A0" letter-spacing="3">KITCHEN ORDER TICKET</text>`
+    `<text x="${PAGE_W / 2}" y="54" text-anchor="middle" font-family="${SANS}" font-size="9.5" fill="#8FA6A0" letter-spacing="3">KITCHEN ORDER TICKET</text>`
   );
   parts.push(
-    `<text x="${PAGE_W / 2}" y="84" text-anchor="middle" font-family="${MONO}" font-size="28" font-weight="bold" fill="#FFFFFF">KOT ${xmlEsc(
+    `<text x="${PAGE_W / 2}" y="94" text-anchor="middle" font-family="${MONO}" font-size="28" font-weight="bold" fill="#FFFFFF">${xmlEsc(
       o.orderNumber
     )}</text>`
   );
@@ -287,7 +295,9 @@ export async function buildKotImage(o: KotBroadcastOrder, propertyName: string):
   // Items
   let y = headerH + metaH + 20;
   parts.push(
-    `<text x="20" y="${y - 4}" font-family="${SANS}" font-size="10" letter-spacing="2" fill="${MUTED}">ITEMS</text>`
+    `<text x="20" y="${y - 4}" font-family="${SANS}" font-size="10" letter-spacing="2" fill="${MUTED}">ITEMS · ${itemCount(
+      o
+    )}</text>`
   );
   y += 18;
   for (let ri = 0; ri < rows.length; ri++) {
@@ -295,7 +305,7 @@ export async function buildKotImage(o: KotBroadcastOrder, propertyName: string):
     for (let li = 0; li < r.lines.length; li++) {
       if (li === 0) {
         parts.push(
-          `<text x="20" y="${y}" font-family="${MONO}" font-size="16" font-weight="bold" fill="${PINE}"><tspan x="20">${xmlEsc(
+          `<text x="20" y="${y}" font-family="${MONO}" font-size="16" font-weight="bold" fill="${BRASS}"><tspan x="20">${xmlEsc(
             String(o.items[ri]?.qty ?? 1)
           )}×</tspan><tspan x="64" font-weight="normal" fill="${INK}">${xmlEsc(r.lines[li])}</tspan></text>`
         );
@@ -318,19 +328,37 @@ export async function buildKotImage(o: KotBroadcastOrder, propertyName: string):
     y += 12;
   }
 
-  // Divider + footer
+  // Divider + totals block
   parts.push(
     `<line x1="20" y1="${y + 2}" x2="${PAGE_W - 20}" y2="${y + 2}" stroke="${MUTED}" stroke-width="1" stroke-dasharray="5 4"/>`
   );
-  const fy = y + 30;
+  const fy1 = y + 28;
   parts.push(
-    `<text x="20" y="${fy}" font-family="${SANS}" font-size="14" fill="${MUTED}">Items: ${itemCount(o)}</text>`
+    `<text x="20" y="${fy1}" font-family="${SANS}" font-size="13" fill="${MUTED}">Items: ${itemCount(o)}</text>`
   );
   parts.push(
-    `<text x="${PAGE_W - 20}" y="${fy}" text-anchor="end" font-family="${SANS}" font-size="16" font-weight="bold" fill="${PINE}">${xmlEsc(
-      `${inr(o.totalAmount)} incl. GST`
+    `<text x="${PAGE_W - 20}" y="${fy1}" text-anchor="end" font-family="${SANS}" font-size="13" fill="${MUTED}">Subtotal ${xmlEsc(
+      inr(o.subtotal)
     )}</text>`
   );
+  const fy2 = fy1 + 20;
+  parts.push(
+    `<text x="${PAGE_W - 20}" y="${fy2}" text-anchor="end" font-family="${SANS}" font-size="13" fill="${MUTED}">GST ${xmlEsc(
+      inr(o.taxAmount)
+    )}</text>`
+  );
+  const fy3 = fy2 + 30;
+  parts.push(
+    `<text x="20" y="${fy3}" font-family="${SANS}" font-size="15" font-weight="bold" fill="${PINE}" letter-spacing="1">TOTAL</text>`
+  );
+  parts.push(
+    `<text x="${PAGE_W - 20}" y="${fy3}" text-anchor="end" font-family="${MONO}" font-size="24" font-weight="bold" fill="${PINE}">${xmlEsc(
+      inr(o.totalAmount)
+    )}</text>`
+  );
+
+  // Brass accent bar (bottom edge)
+  parts.push(`<rect y="${height - 6}" width="${PAGE_W}" height="6" fill="${BRASS}"/>`);
   parts.push(`</svg>`);
 
   return sharp(Buffer.from(parts.join("")), { density: 144 }).resize(960).png().toBuffer();

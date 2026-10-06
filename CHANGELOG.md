@@ -12,6 +12,22 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.6.0] — 2026-10-06 · Golden Ticket
+
+### Added — Invoice & details on every reservation
+- **Actions menu on every reservation row**: the Reservations desk now gives each booking a row-level actions menu (⋯) — "Invoice & Details" opens the complete white-labeled GST tax invoice for that reservation, available for open *and* checked-out bookings, so the front desk can pull up (or re-issue) any guest invoice in two clicks.
+- The invoice sheet shows the full stay summary alongside the statutory format: numbered line items (Qty, Rate, Taxable, GST%), CGST/SGST split, Place of Supply, payments recorded, amount in words, declaration and Authorised Signatory — with **Download** (standalone styled HTML, named by invoice number) and **Print** (print-isolated so only the invoice leaves the printer).
+
+### Changed — One shared invoice format
+- **New shared invoice primitives** (`src/lib/invoice-format.ts` + `src/components/shared/InvoiceDoc.tsx`): the payload types, money formatting, invoice notes (promo discounts, early-departure credits, departure postings) and the standalone HTML document builder now live in one place.
+- **Billing & Folio refactored onto it** — folio bills, group bills and reservation invoices all render the identical white-labeled format from the same code path; formatting drift between surfaces is now impossible by construction.
+
+### Changed — Refined kitchen tickets (KOT)
+- **One shared receipt component** (`KotReceipt`): the "order sent" dialog and the order detail sheet print from the exact same redesigned ticket — property masthead in the display face with a brass rule, "KITCHEN ORDER TICKET" eyebrow, giant order number, a where/when strip (time · table/room/takeaway), items with a brass quantity column and hanging cooking notes, and a subtotal · GST · TOTAL (incl. GST) footer. No platform branding anywhere.
+- **Richer WhatsApp broadcasts** (`kot-broadcast.ts`): ticket images gain a taller pine header with a brass underline rule, an "ITEMS · N" counter, brass quantity figures and an itemised Subtotal / GST / TOTAL block; plain-text broadcasts now carry the same Subtotal + GST breakdown lines before the total.
+
+---
+
 ## [2.5.0] — 2026-10-05 · White Label
 
 ### Added — Payment Gateways (platform owner → tenants)
