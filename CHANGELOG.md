@@ -12,6 +12,20 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.7.0] — 2026-10-06 · Flat Five & Instant Payroll
+
+### Changed — Flat 5% GST across the property
+- **One slab for everything**: room, F&B, bar, laundry, misc and no-show charges now all bill at **5% GST — CGST 2.5% + SGST 2.5%** (previously rooms & bar billed at 12%, laundry & misc at 18%). Reservation invoices, folio bills, group consolidated bills and POS orders all compute from the same table, so the taxable value, CGST/SGST amounts, grand total and amount-in-words now line up everywhere.
+- Menu items default to 5% GST for new dishes (the per-dish override stays available to admins), and the POS order tax math uses the same flat rate.
+- No stored data was rewritten: GST is computed at billing time from the category table, so the change applies cleanly to existing and future folios without touching guest records.
+
+### Added — Instant staff ⇆ payroll sync
+- **Payroll follows the directory in real time**: creating a staff member now creates their current-month payroll draft in the same breath — the register shows them the moment you open it, no "Generate drafts" needed. The payroll read also self-heals: any active staff member missing from the register gets a draft on view.
+- **HR profile at add time**: the Add-Staff dialog gains Designation, Department, Monthly salary and Join date fields (all optional), so payroll drafts are born with a real salary instead of zero.
+- **Salary edits flow through**: changing salary in the HR directory refreshes the current-cycle payroll draft (net pay recomputed with manual allowances / bonus / advance preserved); processed and paid cycles stay frozen.
+
+---
+
 ## [2.6.0] — 2026-10-06 · Golden Ticket
 
 ### Added — Invoice & details on every reservation

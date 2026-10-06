@@ -111,6 +111,15 @@ const ROLE_LABELS: Record<string, string> = {
   restaurant_staff: "Restaurant Staff",
 };
 
+const DEPARTMENTS = [
+  { value: "front_office", label: "Front Office" },
+  { value: "housekeeping", label: "Housekeeping" },
+  { value: "fnb", label: "F&B" },
+  { value: "maintenance", label: "Maintenance" },
+  { value: "accounts", label: "Accounts" },
+  { value: "other", label: "Other" },
+] as const;
+
 const ROLE_BADGE: Record<string, string> = {
   hotel_admin: "border-brass/40 bg-brass-50 text-brass",
   front_desk: "border-pine-700/30 bg-pine-100 text-pine-700",
@@ -191,7 +200,10 @@ export default function SettingsView() {
 
   // Staff dialogs
   const [addOpen, setAddOpen] = useState(false);
-  const [addForm, setAddForm] = useState({ name: "", email: "", role: "front_desk", phone: "", googleEmail: "" });
+  const [addForm, setAddForm] = useState({
+    name: "", email: "", role: "front_desk", phone: "", googleEmail: "",
+    designation: "", department: "none", salary: "", joinDate: "",
+  });
   const [adding, setAdding] = useState(false);
   // One-time credential reveal after creating a staff account — the temp password
   // is never stored client-side and cannot be shown again once dismissed.
@@ -426,13 +438,24 @@ export default function SettingsView() {
       // dialog; the staff member sets their own permanent password on first login.
       const res = await api<{ staff: StaffMember; tempPassword: string }>("/api/settings/staff", {
         method: "POST",
-        body: JSON.stringify(addForm),
+        body: JSON.stringify({
+          ...addForm,
+          department: addForm.department === "none" ? "" : addForm.department,
+          salary: addForm.salary.trim() === "" ? undefined : Number(addForm.salary),
+          joinDate: addForm.joinDate || undefined,
+        }),
       });
       if (data) setData({ ...data, staff: [...data.staff, res.staff] });
       setAddOpen(false);
       setCredShown({ name: res.staff.name, email: res.staff.email, role: res.staff.role, tempPassword: res.tempPassword });
-      setAddForm({ name: "", email: "", role: "front_desk", phone: "", googleEmail: "" });
-      toast({ title: "Staff added", description: `${res.staff.name} · ${ROLE_LABELS[res.staff.role] ?? res.staff.role}` });
+      setAddForm({
+        name: "", email: "", role: "front_desk", phone: "", googleEmail: "",
+        designation: "", department: "none", salary: "", joinDate: "",
+      });
+      toast({
+        title: "Staff added",
+        description: `${res.staff.name} · ${ROLE_LABELS[res.staff.role] ?? res.staff.role} · payroll draft created`,
+      });
       void load(); // refresh the directory from the server
     } catch (e) {
       toast({ title: "Could not add staff", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
@@ -1365,10 +1388,10 @@ export default function SettingsView() {
 
       {/* ── Add Staff dialog ───────────────────────────────────────────── */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Add Staff</DialogTitle>
-            <DialogDescription>Create a staff account with role-based access.</DialogDescription>
+            <DialogDescription>Create a staff account with role-based access and HR profile.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             <div>
@@ -1400,6 +1423,54 @@ export default function SettingsView() {
             <div>
               <label className="field-label">Phone (optional)</label>
               <input className="field" value={addForm.phone} onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })} placeholder="+91 …" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="field-label">Designation (optional)</label>
+                <input
+                  className="field" value={addForm.designation}
+                  onChange={(e) => setAddForm({ ...addForm, designation: e.target.value })}
+                  placeholder="e.g. Housekeeper"
+                />
+              </div>
+              <div>
+                <label className="field-label">Department (optional)</label>
+                <Select value={addForm.department} onValueChange={(v) => setAddForm({ ...addForm, department: v })}>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">— None —</SelectItem>
+                    {DEPARTMENTS.map((d) => (
+                      <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="field-label">Monthly salary ₹ (optional)</label>
+                <input
+                  className="field" type="number" min="0" step="100"
+                  value={addForm.salary}
+                  onChange={(e) => setAddForm({ ...addForm, salary: e.target.value })}
+                  placeholder="e.g. 18000"
+                />
+              </div>
+              <div>
+                <label className="field-label">Join date (optional)</label>
+                <input
+                  className="field" type="date"
+                  value={addForm.joinDate}
+                  onChange={(e) => setAddForm({ ...addForm, joinDate: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="rounded-md border border-ok/40 bg-ok/10 px-3 py-2.5 flex items-start gap-2.5">
+              <Wallet className="h-4 w-4 text-ok shrink-0 mt-0.5" />
+              <p className="text-[12.5px] leading-snug text-pine">
+                A <span className="font-semibold">payroll draft</span> for this month is created automatically — the new
+                staff member appears in the payroll register instantly.
+              </p>
             </div>
             <div>
               <label className="field-label">Google account (optional)</label>

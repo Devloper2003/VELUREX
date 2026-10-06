@@ -11,9 +11,9 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.6.0";
+export const APP_VERSION = "2.7.0";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Golden Ticket";
+export const APP_RELEASE_CODENAME = "Flat Five & Instant Payroll";
 export const APP_RELEASE_DATE = "2026-10-06";
 
 export type ReleaseNote = {
@@ -25,6 +25,17 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.7.0",
+    date: "2026-10-06",
+    codename: "Flat Five & Instant Payroll",
+    highlights: [
+      "Flat 5% GST — every guest-facing charge (room, F&B, bar, laundry, misc, no-show) now bills at a single 5% slab: CGST 2.5% + SGST 2.5% on invoices, folio bills, group bills and POS orders alike, with taxable value, tax amount and grand total recalculated to match",
+      "Instant payroll sync — adding a staff member now creates their current-month payroll draft immediately (with designation, department, salary and join date captured right in the Add-Staff dialog), so the payroll register always shows the full team the moment you open it",
+      "Salary edits flow through — changing a staff member's salary in the directory refreshes their payroll draft (net pay recomputed, manual allowances/bonus/advance preserved) without needing a regenerate",
+      "Menu GST default flattened to 5% for new dishes and existing demo data; admins can still override per dish",
+    ],
+  },
   {
     version: "2.6.0",
     date: "2026-10-06",

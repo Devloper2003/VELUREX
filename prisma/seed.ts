@@ -305,7 +305,7 @@ async function main() {
     { name: "Wine — Sula Riesling", category: "bar", price: 650, isVeg: true, description: "Glass" },
   ];
   const menuItems = await Promise.all(
-    menuData.map((m, i) => db.menuItem.create({ data: { ...m, propertyId: property.id, sortOrder: i, taxRate: m.category === "bar" ? 12 : 5 } }))
+    menuData.map((m, i) => db.menuItem.create({ data: { ...m, propertyId: property.id, sortOrder: i, taxRate: 5 } }))
   );
 
   // A settled dine-in order from yesterday + a live room-service order posted to folio

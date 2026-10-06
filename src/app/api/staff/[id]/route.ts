@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { logActivity } from "@/lib/business";
+import { syncStaffPayrollDraft, currentYearMonth } from "@/lib/payroll-sync";
 
 const DEPARTMENTS = ["front_office", "housekeeping", "fnb", "maintenance", "accounts", "other"];
 
@@ -97,6 +98,19 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   }
 
   const updated = await db.staff.update({ where: { id }, data });
+
+  // Instant payroll sync: when the salary (or any HR field) changes, align the
+  // current-cycle payroll draft with the new profile — base salary refreshed,
+  // netPay recomputed with manual components preserved, and a draft created if
+  // the staff member was somehow still missing from the register. Best-effort.
+  if (data.salary !== undefined) {
+    try {
+      const { year, month } = currentYearMonth();
+      await syncStaffPayrollDraft(propertyId, id, updated.salary, year, month);
+    } catch {
+      // best-effort; the next payroll read or Generate will reconcile
+    }
+  }
 
   await logActivity({
     propertyId,

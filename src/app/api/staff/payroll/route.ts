@@ -1,16 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
+import { ensurePayrollDrafts, currentYearMonth } from "@/lib/payroll-sync";
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
-}
-
-/** Current year/month in Asia/Kolkata (property timezone). */
-function currentYearMonth(): { year: number; month: number } {
-  const ym = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }).slice(0, 7); // yyyy-mm
-  const [y, m] = ym.split("-");
-  return { year: Number(y), month: Number(m) };
 }
 
 /**
@@ -28,6 +22,15 @@ export async function GET(req: NextRequest) {
   const month = Number(req.nextUrl.searchParams.get("month") ?? fallback.month);
   if (!Number.isInteger(year) || year < 2000 || year > 2100 || !Number.isInteger(month) || month < 1 || month > 12) {
     return NextResponse.json({ error: "year (2000-2100) and month (1-12) are required as valid numbers" }, { status: 400 });
+  }
+
+  // Instant staff ⇆ payroll sync: before the register is read, any active
+  // staff member still missing a record for this cycle gets a draft created.
+  // Best-effort — a sync hiccup must never break the read.
+  try {
+    await ensurePayrollDrafts(propertyId, year, month);
+  } catch {
+    // fall through: the register still renders from whatever exists
   }
 
   const records = await db.payrollRecord.findMany({

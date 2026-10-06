@@ -88,9 +88,7 @@ export async function POST(req: NextRequest) {
       taxRate:
         Number.isFinite(Number(body?.taxRate)) && Number(body?.taxRate) >= 0
           ? Number(body?.taxRate)
-          : category === "bar"
-            ? 12
-            : 5,
+          : 5, // flat 5% GST (CGST 2.5% + SGST 2.5%) unless the admin overrides
       sortOrder: (last?.sortOrder ?? -1) + 1,
     },
   });

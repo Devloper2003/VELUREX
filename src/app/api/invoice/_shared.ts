@@ -5,14 +5,18 @@
 
 export const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** GST rate % per folio category (Indian hotel billing). */
+/**
+ * GST rate % per folio category — property policy: a single flat 5% slab on
+ * every guest-facing charge (CGST 2.5% + SGST 2.5%). Discount / tax-adjust
+ * buckets never attract GST.
+ */
 export const GST_BY_CATEGORY: Record<string, number> = {
-  room: 12,
-  bar: 12,
-  no_show: 12,
+  room: 5,
+  bar: 5,
+  no_show: 5,
   fnb: 5,
-  laundry: 18,
-  misc: 18,
+  laundry: 5,
+  misc: 5,
   discount: 0,
   tax: 0,
 };
