@@ -5,6 +5,7 @@ import { logActivity, nextOrderNumber, startOfDay } from "@/lib/business";
 import { emitRealtime } from "@/lib/realtime-server";
 import { getTenantEntitlements, requireFeature, assertWritable } from "@/lib/entitlements";
 import { broadcastKot } from "@/lib/kot-broadcast";
+import { computePosTotals } from "@/lib/pos-gst";
 
 const ORDER_TYPES = ["dine_in", "room_service", "takeaway"];
 const POS_ROLES: Role[] = ["hotel_admin", "restaurant_staff", "front_desk"];
@@ -119,13 +120,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Load and validate menu items, compute amounts.
+  // Load and validate menu items, then run the shared POS GST engine —
+  // discount applies BEFORE tax (CGST §15): GST is charged on the discounted
+  // taxable value, split CGST 2.5% + SGST 2.5% on the flat 5% slab.
   const ids = rawItems.map((i) => str(i.menuItemId)).filter(Boolean);
   const menuItems = await db.menuItem.findMany({ where: { id: { in: ids }, propertyId } });
   const menuMap = new Map(menuItems.map((m) => [m.id, m]));
 
-  let subtotal = 0;
-  let taxAmount = 0;
+  const taxedLines: { price: number; qty: number; taxRate: number }[] = [];
   const orderItems: {
     menuItemId: string;
     name: string;
@@ -147,8 +149,7 @@ export async function POST(req: NextRequest) {
     }
     const qty = Math.max(1, Math.floor(Number(raw.qty) || 0));
     const amount = round2(menu.price * qty);
-    subtotal += amount;
-    taxAmount += (amount * menu.taxRate) / 100;
+    taxedLines.push({ price: menu.price, qty, taxRate: menu.taxRate });
     orderItems.push({
       menuItemId: menu.id,
       name: menu.name,
@@ -160,9 +161,11 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  subtotal = round2(subtotal);
-  taxAmount = round2(taxAmount);
-  const totalAmount = round2(subtotal + taxAmount);
+  const discountMode = ["percent", "flat"].includes(str(body.discountMode))
+    ? str(body.discountMode)
+    : "none";
+  const discountValue = Math.max(0, Number(body.discountValue) || 0);
+  const totals = computePosTotals(taxedLines, discountMode, discountValue);
 
   const order = await db.posOrder.create({
     data: {
@@ -174,9 +177,12 @@ export async function POST(req: NextRequest) {
       reservationId: reservation?.id ?? null,
       guestName: str(body.guestName) || reservation?.guest.fullName || "",
       status: "pending",
-      subtotal,
-      taxAmount,
-      totalAmount,
+      subtotal: totals.subtotal,
+      discountMode,
+      discountValue,
+      discountAmount: totals.discountAmount,
+      taxAmount: totals.tax,
+      totalAmount: totals.total,
       items: { create: orderItems },
     },
     include: FULL_INCLUDE,
@@ -190,7 +196,7 @@ export async function POST(req: NextRequest) {
     action: "POS_ORDER_CREATE",
     entity: "PosOrder",
     entityId: order.id,
-    details: `${order.orderNumber} · ${where} · ${order.items.length} items · ₹${totalAmount}`,
+    details: `${order.orderNumber} · ${where} · ${order.items.length} items · ₹${totals.total}${totals.discountAmount > 0 ? ` (−₹${totals.discountAmount} discount)` : ""}`,
   });
 
   // Live-push to kitchen displays + POS terminals (best-effort).
@@ -200,7 +206,7 @@ export async function POST(req: NextRequest) {
     orderNumber: order.orderNumber,
     where,
     itemCount: order.items.length,
-    totalAmount,
+    totalAmount: totals.total,
   });
   emitRealtime("global", "kot:update", { kind: "new", orderId: order.id, orderNumber: order.orderNumber, where });
 

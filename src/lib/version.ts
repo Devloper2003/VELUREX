@@ -11,9 +11,9 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.7.0";
+export const APP_VERSION = "2.8.0";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Flat Five & Instant Payroll";
+export const APP_RELEASE_CODENAME = "Official POS GST";
 export const APP_RELEASE_DATE = "2026-10-06";
 
 export type ReleaseNote = {
@@ -25,6 +25,19 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.8.0",
+    date: "2026-10-06",
+    codename: "Official POS GST",
+    highlights: [
+      "Official GST marking in the POS — the cart, KOT receipts and order details now break every bill down exactly like the folio tax invoice: gross amount → discount → taxable value → CGST @ 2.5% → SGST @ 2.5% → grand total",
+      "Guest Bill — a proper restaurant tax invoice on every order (the receipt-icon button): property masthead with GSTIN, Place of Supply, item table, CGST/SGST rate breakup, amount in words, payment status, declaration and authorised signatory — print or one-click HTML download",
+      "Order-level discounts — % or flat ₹, applied before GST (CGST §15): tax is charged on the discounted taxable value, with the same math enforced server-side and previewed live in the cart",
+      "Day Sales Summary (Z-report) — today's orders with gross, discounts, taxable value, CGST/SGST collected, net sales, collections by payment method and an unpaid-orders flag, ready to print",
+      "Reorder — pull any of today's orders back into the cart in one tap (sold-out items are skipped and reported)",
+      "Menu composer flattened to the 5% slab with a CGST 2.5% + SGST 2.5% hint, and the property's state now feeds the bill's Place of Supply",
+    ],
+  },
   {
     version: "2.7.0",
     date: "2026-10-06",

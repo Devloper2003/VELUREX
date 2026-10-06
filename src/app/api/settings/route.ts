@@ -12,6 +12,7 @@ function propertyPayload(p: {
   name: string;
   address: string;
   city: string;
+  state: string;
   gstin: string;
   phone: string;
   email: string;
@@ -35,6 +36,7 @@ function propertyPayload(p: {
     name: p.name,
     address: p.address,
     city: p.city,
+    state: p.state,
     gstin: p.gstin,
     phone: p.phone,
     email: p.email,

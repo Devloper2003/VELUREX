@@ -357,8 +357,11 @@ model PosOrder {
   reservationId String?
   guestName     String    @default("")
   status        String    @default("pending") // pending | preparing | served | completed | cancelled
-  subtotal      Float     @default(0)
-  taxAmount     Float     @default(0)
+  subtotal      Float     @default(0) // gross before discount — GST base derives from this minus discount
+  discountMode  String    @default("none") // none | percent | flat
+  discountValue Float     @default(0)
+  discountAmount Float    @default(0)
+  taxAmount     Float     @default(0) // total GST (CGST 2.5% + SGST 2.5%) on the discounted taxable value
   totalAmount   Float     @default(0)
   paymentStatus String    @default("unpaid") // unpaid | paid | posted_to_folio
   paymentMethod String    @default("")

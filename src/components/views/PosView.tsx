@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
-import { inr, fmtTime, fmtDateShort, STATUS_LABELS } from "@/lib/format";
+import { inr, fmtTime, fmtDateShort, fmtDate, STATUS_LABELS, amountInWordsINR } from "@/lib/format";
+import { money2, splitHalf } from "@/lib/invoice-format";
+import { computePosTotals, posBillHtml, posRateBreakup, discountLabel, type PosBill } from "@/lib/pos-gst";
 import { useSession } from "@/lib/store";
 import { useRealtime } from "@/lib/realtime";
 import { useToast } from "@/hooks/use-toast";
@@ -36,6 +38,8 @@ import {
   ConciergeBell,
   CookingPot,
   CreditCard,
+  Calculator,
+  Download,
   Flame,
   ImagePlus,
   LayoutGrid,
@@ -44,6 +48,7 @@ import {
   Plus,
   Printer,
   RefreshCw,
+  Repeat,
   ReceiptText,
   Salad,
   Search,
@@ -88,6 +93,10 @@ interface OrderItemT {
   qty: number;
   notes: string;
   status: string;
+  price: number;
+  amount: number;
+  menuItemId?: string | null;
+  menuItem?: { category: string; taxRate: number } | null;
 }
 
 interface OrderT {
@@ -99,12 +108,17 @@ interface OrderT {
   guestName: string;
   status: string;
   subtotal: number;
+  discountMode: string;
+  discountValue: number;
+  discountAmount: number;
   taxAmount: number;
   totalAmount: number;
   paymentStatus: string;
   paymentMethod: string;
+  servedBy: string;
   reservationId: string | null;
   createdAt: string;
+  updatedAt: string;
   items: OrderItemT[];
   reservation?: { guest?: { fullName: string }; room?: { number: string } } | null;
 }
@@ -194,6 +208,20 @@ const GATEWAY_LABELS: Record<string, string> = {
   custom: "Custom",
 };
 const gatewayLabel = (p: string) => GATEWAY_LABELS[p] ?? p.replace(/_/g, " ");
+
+/** Uniform item GST rate across an order (null when rates are mixed). */
+function orderUniformRate(o: OrderT): number | null {
+  const rates = new Set(o.items.map((i) => i.menuItem?.taxRate ?? 5));
+  return rates.size === 1 ? [...rates][0] : null;
+}
+const cgstLabel = (o: OrderT) => {
+  const r = orderUniformRate(o);
+  return r === null ? "CGST" : `CGST @ ${r / 2}%`;
+};
+const sgstLabel = (o: OrderT) => {
+  const r = orderUniformRate(o);
+  return r === null ? "SGST" : `SGST @ ${r / 2}%`;
+};
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
@@ -387,12 +415,26 @@ function KotReceipt({ id, order, propertyName }: { id: string; order: OrderT; pr
       </div>
       <div className="border-t border-dashed border-line-strong pt-2 space-y-1">
         <div className="flex justify-between text-xs text-muted-ink">
-          <span>Subtotal</span>
+          <span>Gross amount</span>
           <span>{inr(order.subtotal, { decimals: true })}</span>
         </div>
+        {order.discountAmount > 0 && (
+          <div className="flex justify-between text-xs text-muted-ink">
+            <span>{discountLabel(order.discountMode, order.discountValue)}</span>
+            <span>−{inr(order.discountAmount, { decimals: true })}</span>
+          </div>
+        )}
         <div className="flex justify-between text-xs text-muted-ink">
-          <span>GST</span>
-          <span>{inr(order.taxAmount, { decimals: true })}</span>
+          <span>Taxable value</span>
+          <span>{inr(order.subtotal - order.discountAmount, { decimals: true })}</span>
+        </div>
+        <div className="flex justify-between text-xs text-muted-ink">
+          <span>{cgstLabel(order)}</span>
+          <span>{inr(splitHalf(order.taxAmount), { decimals: true })}</span>
+        </div>
+        <div className="flex justify-between text-xs text-muted-ink">
+          <span>{sgstLabel(order)}</span>
+          <span>{inr(order.taxAmount - splitHalf(order.taxAmount), { decimals: true })}</span>
         </div>
         <div className="flex justify-between border-t border-line pt-1.5">
           <span className="text-xs uppercase tracking-wider">Total (incl. GST)</span>
@@ -456,6 +498,25 @@ export default function PosView() {
   const [pickingFor, setPickingFor] = useState<string | null>(null); // "new" | menuItemId
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // ── Order-level discount (applied BEFORE GST — official CGST §15 semantics) ──
+  const [discMode, setDiscMode] = useState<"none" | "percent" | "flat">("none");
+  const [discValue, setDiscValue] = useState("");
+
+  // ── Official restaurant tax invoice (guest bill) ──
+  const [hotel, setHotel] = useState({
+    name: "",
+    address: "",
+    city: "",
+    state: "",
+    gstin: "",
+    phone: "",
+    email: "",
+  });
+  const [billOrderId, setBillOrderId] = useState<string | null>(null);
+
+  // ── Day sales summary (Z-report) ──
+  const [dayOpen, setDayOpen] = useState(false);
+
   const [successOrder, setSuccessOrder] = useState<OrderT | null>(null);
   const [successKotNote, setSuccessKotNote] = useState("");
   const [settleTarget, setSettleTarget] = useState<OrderT | null>(null);
@@ -496,10 +557,15 @@ export default function PosView() {
     }
   }, []);
 
-  useEffect(() => {
-    loadMenu();
-    loadInhouse();
-  }, [loadMenu, loadInhouse]);
+  // Property identity for the official GST bill (GSTIN, address, place of supply).
+  const loadHotel = useCallback(async () => {
+    try {
+      const d = await api<{ property: { name: string; address: string; city: string; state: string; gstin: string; phone: string; email: string } }>("/api/settings");
+      setHotel(d.property);
+    } catch {
+      /* optional — bill falls back to the session property name */
+    }
+  }, []);
 
   const loadGateways = useCallback(async () => {
     try {
@@ -518,9 +584,10 @@ export default function PosView() {
   useEffect(() => {
     loadOrders();
     loadGateways();
+    loadHotel();
     const t = setInterval(loadOrders, 30000);
     return () => clearInterval(t);
-  }, [loadOrders, loadGateways]);
+  }, [loadOrders, loadGateways, loadHotel]);
 
   // First-run setup: opening the manager on an empty menu pops the composer open.
   useEffect(() => {
@@ -536,6 +603,64 @@ export default function PosView() {
   const selectedGuest = inhouse.find((g) => g.reservationId === reservationId) ?? null;
   const detailOrder = detailId ? orders.find((o) => o.id === detailId) ?? null : null;
   const detailBusy = detailOrder ? itemBusyId === detailOrder.id : false;
+  const billOrder = billOrderId ? orders.find((o) => o.id === billOrderId) ?? null : null;
+
+  /** Official restaurant tax invoice payload for the selected order. */
+  const bill: PosBill | null = billOrder
+    ? {
+        billNo: billOrder.orderNumber,
+        date: billOrder.createdAt,
+        orderType: billOrder.orderType,
+        tableNumber: billOrder.tableNumber,
+        roomNumber: billOrder.roomNumber,
+        guestName: billOrder.guestName,
+        servedBy: billOrder.servedBy,
+        hotel: { ...hotel, name: hotel.name || propertyName },
+        items: billOrder.items.map((i) => ({
+          name: i.name,
+          category: i.menuItem?.category,
+          qty: i.qty,
+          price: i.price,
+          amount: i.amount,
+          taxRate: i.menuItem?.taxRate ?? 5,
+          notes: i.notes || undefined,
+        })),
+        subtotal: billOrder.subtotal,
+        discountMode: billOrder.discountMode,
+        discountValue: billOrder.discountValue,
+        discountAmount: billOrder.discountAmount,
+        taxAmount: billOrder.taxAmount,
+        totalAmount: billOrder.totalAmount,
+        paymentStatus: billOrder.paymentStatus,
+        paymentMethod: billOrder.paymentMethod,
+        settledAt: billOrder.updatedAt,
+      }
+    : null;
+
+  // ── Day sales summary (Z-report) — aggregates stored order totals ──
+  const dayStats = useMemo(() => {
+    const live = orders.filter((o) => o.status !== "cancelled");
+    const sum = (f: (o: OrderT) => number) => round2(live.reduce((s, o) => s + f(o), 0));
+    const byMethod = new Map<string, number>();
+    for (const o of live) {
+      if (o.paymentStatus === "unpaid") continue;
+      const key =
+        o.paymentStatus === "posted_to_folio"
+          ? "Room folio"
+          : (o.paymentMethod || "online").toUpperCase();
+      byMethod.set(key, round2((byMethod.get(key) ?? 0) + o.totalAmount));
+    }
+    return {
+      count: live.length,
+      unpaid: live.filter((o) => o.paymentStatus === "unpaid").length,
+      gross: sum((o) => o.subtotal),
+      discount: sum((o) => o.discountAmount),
+      taxable: sum((o) => o.subtotal - o.discountAmount),
+      tax: sum((o) => o.taxAmount),
+      net: sum((o) => o.totalAmount),
+      byMethod: [...byMethod.entries()].sort((a, b) => b[1] - a[1]),
+    };
+  }, [orders]);
 
   const visibleItems = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -575,10 +700,15 @@ export default function PosView() {
   const activeRail = railItems.find((r) => r.key === mgCat) ?? railItems[0];
   const allStats = railItems.find((r) => r.key === "all") ?? { total: 0, soldOut: 0, key: "all", label: "All" };
 
-  const totals = useMemo(() => {
-    const subtotal = round2(cart.reduce((s, l) => s + l.price * l.qty, 0));
-    const tax = round2(cart.reduce((s, l) => s + (l.price * l.qty * l.taxRate) / 100, 0));
-    return { subtotal, tax, total: round2(subtotal + tax) };
+  const totals = useMemo(
+    () => computePosTotals(cart, discMode, Number(discValue) || 0),
+    [cart, discMode, discValue]
+  );
+
+  // Uniform GST rate across the cart (null when mixed) — drives the CGST/SGST labels.
+  const cartRate = useMemo(() => {
+    const rates = new Set(cart.map((l) => l.taxRate));
+    return rates.size === 1 ? [...rates][0] : null;
   }, [cart]);
 
   const cartQty = (menuItemId: string) => cart.find((l) => l.menuItemId === menuItemId)?.qty ?? 0;
@@ -631,6 +761,10 @@ export default function PosView() {
         if (selectedGuest) payload.roomNumber = selectedGuest.roomNumber;
       }
       if (orderType === "takeaway") payload.guestName = guestName.trim() || "Walk-in Guest";
+      if (discMode !== "none" && Number(discValue) > 0) {
+        payload.discountMode = discMode;
+        payload.discountValue = Number(discValue);
+      }
 
       const res = await api<{
         order: OrderT;
@@ -640,6 +774,8 @@ export default function PosView() {
         body: JSON.stringify(payload),
       });
       setCart([]);
+      setDiscMode("none");
+      setDiscValue("");
       const kb = res.kotBroadcast;
       setSuccessKotNote(
         kb && kb.sent > 0
@@ -715,6 +851,46 @@ export default function PosView() {
     }
   };
 
+  // ── Reorder — pull a past order's items back into the cart ──
+  const reorder = (o: OrderT) => {
+    let added = 0;
+    let skipped = 0;
+    setCart((prev) => {
+      const next = prev.map((l) => ({ ...l }));
+      for (const it of o.items) {
+        const m =
+          menu.find((mm) => mm.id === it.menuItemId) ??
+          menu.find((mm) => mm.name.toLowerCase() === it.name.toLowerCase());
+        if (!m || !m.available) {
+          skipped += 1;
+          continue;
+        }
+        const found = next.find((l) => l.menuItemId === m.id);
+        if (found) found.qty += it.qty;
+        else next.push({ menuItemId: m.id, name: m.name, price: m.price, taxRate: m.taxRate, isVeg: m.isVeg, qty: it.qty, notes: it.notes || "" });
+        added += 1;
+      }
+      return next;
+    });
+    toast({
+      title: added > 0 ? `Reordered ${added} item${added === 1 ? "" : "s"} from ${o.orderNumber}` : "Nothing to reorder",
+      description: skipped > 0 ? `${skipped} item${skipped === 1 ? "" : "s"} unavailable or sold out — skipped.` : undefined,
+    });
+  };
+
+  // ── Guest bill download — official restaurant tax invoice as standalone HTML ──
+  const downloadBill = () => {
+    if (!bill) return;
+    const blob = new Blob([posBillHtml(bill)], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${bill.billNo}-tax-invoice.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast({ title: "Tax invoice downloaded", description: `${bill.billNo} · ${inr(bill.totalAmount, { decimals: true })}` });
+  };
+
   // ── Order detail / KOT actions — drive the kitchen ticket from this terminal ──
   const advanceOrderItem = async (item: OrderItemT) => {
     const next = KOT_ITEM_NEXT[item.status];
@@ -779,7 +955,7 @@ export default function PosView() {
           price,
           isVeg: newVeg,
           description: newDesc.trim(),
-          taxRate: Number(newTax) || (addedCat === "bar" ? 12 : 5),
+          taxRate: Number(newTax) || 5, // flat 5% GST (CGST 2.5% + SGST 2.5%) unless overridden
           imageUrl: newImageUrl || undefined,
         }),
       });
@@ -788,7 +964,7 @@ export default function PosView() {
       setNewPrice("");
       setNewDesc("");
       setNewVeg(true);
-      setNewTax(addedCat === "bar" ? "12" : "5");
+      setNewTax("5");
       setNewImageUrl("");
       setMgCat(addedCat); // jump the rail so the new dish is visible immediately
       loadMenu();
@@ -920,7 +1096,7 @@ export default function PosView() {
   // ── Render ──
   return (
     <div className="space-y-4">
-      <style>{`@media print { body * { visibility: hidden !important; } #kot-print, #kot-print * , #kot-print-detail, #kot-print-detail * { visibility: visible !important; } #kot-print, #kot-print-detail { position: fixed; inset: 0; padding: 24px; background: #fff; z-index: 9999; } }`}</style>
+      <style>{`@media print { body * { visibility: hidden !important; } #kot-print, #kot-print * , #kot-print-detail, #kot-print-detail *, #pos-bill-print, #pos-bill-print *, #pos-day-print, #pos-day-print * { visibility: visible !important; } #kot-print, #kot-print-detail, #pos-bill-print, #pos-day-print { position: fixed; inset: 0; padding: 24px; background: #fff; z-index: 9999; } }`}</style>
 
       <div className="grid xl:grid-cols-3 gap-4 items-start">
         {/* ── Left: menu ── */}
@@ -1151,15 +1327,73 @@ export default function PosView() {
                 ))}
               </div>
 
-              {/* Totals */}
+              {/* Order-level discount — GST is charged on the discounted taxable value */}
+              <div className="rounded-md border border-line bg-plaster/40 p-2 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-ink">
+                    Discount (before GST)
+                  </p>
+                  {totals.discountAmount > 0 && (
+                    <span className="badge border-danger/30 bg-danger/10 px-1.5 py-0 text-[10px] text-danger">
+                      −{inr(totals.discountAmount, { decimals: true })}
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-1.5">
+                  <Select value={discMode} onValueChange={(v) => setDiscMode(v as "none" | "percent" | "flat")}>
+                    <SelectTrigger className="h-9 w-[108px]" aria-label="Discount type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      <SelectItem value="percent">% off</SelectItem>
+                      <SelectItem value="flat">Flat ₹</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <input
+                    className="field h-9 flex-1 disabled:opacity-50"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder={discMode === "percent" ? "e.g. 10" : discMode === "flat" ? "e.g. 100" : "—"}
+                    disabled={discMode === "none"}
+                    value={discValue}
+                    onChange={(e) => setDiscValue(e.target.value)}
+                    aria-label="Discount value"
+                  />
+                </div>
+                <p className="text-[10px] leading-snug text-muted-ink">
+                  GST is charged on the discounted taxable value (CGST §15).
+                </p>
+              </div>
+
+              {/* Totals — official GST marking: taxable → CGST 2.5% + SGST 2.5% */}
               <div className="space-y-1 text-sm">
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-ink">Subtotal</span>
+                  <span className="text-muted-ink">Gross amount</span>
                   <span className="font-medium">{inr(totals.subtotal, { decimals: true })}</span>
                 </div>
+                {totals.discountAmount > 0 && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-ink">{discountLabel(discMode, Number(discValue) || 0)}</span>
+                    <span className="font-medium text-danger">−{inr(totals.discountAmount, { decimals: true })}</span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-ink">GST</span>
-                  <span className="font-medium">{inr(totals.tax, { decimals: true })}</span>
+                  <span className="text-muted-ink">Taxable value</span>
+                  <span className="font-medium">{inr(totals.taxable, { decimals: true })}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-ink">
+                    {cartRate === null ? "CGST" : `CGST @ ${cartRate / 2}%`}
+                  </span>
+                  <span className="font-medium">{inr(splitHalf(totals.tax), { decimals: true })}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-ink">
+                    {cartRate === null ? "SGST" : `SGST @ ${cartRate / 2}%`}
+                  </span>
+                  <span className="font-medium">{inr(totals.tax - splitHalf(totals.tax), { decimals: true })}</span>
                 </div>
                 <div className="flex items-center justify-between border-t border-line pt-1.5 mt-1.5">
                   <span className="font-display font-semibold text-pine">Total</span>
@@ -1190,9 +1424,14 @@ export default function PosView() {
               {fmtDateShort(new Date())} · {orders.length} order{orders.length === 1 ? "" : "s"}
             </span>
           </div>
-          <button className="btn-ghost h-8 text-xs" onClick={loadOrders}>
-            <RefreshCw className="h-3.5 w-3.5" /> Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button className="btn-outline h-8 text-xs" onClick={() => setDayOpen(true)}>
+              <Calculator className="h-3.5 w-3.5" /> Day Summary
+            </button>
+            <button className="btn-ghost h-8 text-xs" onClick={loadOrders}>
+              <RefreshCw className="h-3.5 w-3.5" /> Refresh
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto max-h-[440px] overflow-y-auto scroll-slim">
           <table className="w-full">
@@ -1275,6 +1514,24 @@ export default function PosView() {
                         >
                           <Eye className="h-4 w-4" />
                         </button>
+                        <button
+                          className="btn-ghost h-9 w-9 px-0 text-brass"
+                          title="Guest tax invoice (official GST bill)"
+                          aria-label={`Open GST bill for ${o.orderNumber}`}
+                          onClick={() => setBillOrderId(o.id)}
+                        >
+                          <ReceiptText className="h-4 w-4" />
+                        </button>
+                        {o.status !== "cancelled" && o.items.length > 0 && (
+                          <button
+                            className="btn-ghost h-9 w-9 px-0 text-pine-700"
+                            title="Reorder — pull items back into the cart"
+                            aria-label={`Reorder ${o.orderNumber}`}
+                            onClick={() => reorder(o)}
+                          >
+                            <Repeat className="h-4 w-4" />
+                          </button>
+                        )}
                         {o.paymentStatus === "unpaid" && (
                           <button
                             className="btn-brass h-9 px-3 text-xs"
@@ -1491,15 +1748,29 @@ export default function PosView() {
                 </ul>
               </div>
 
-              {/* Bill breakdown */}
+              {/* Bill breakdown — official GST marking: taxable → CGST + SGST */}
               <div className="rounded-md border border-line bg-plaster/40 px-3 py-2.5 space-y-1 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-muted-ink">Subtotal</span>
+                  <span className="text-muted-ink">Gross amount</span>
                   <span>{inr(detailOrder.subtotal, { decimals: true })}</span>
                 </div>
+                {detailOrder.discountAmount > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-ink">{discountLabel(detailOrder.discountMode, detailOrder.discountValue)}</span>
+                    <span className="text-danger">−{inr(detailOrder.discountAmount, { decimals: true })}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
-                  <span className="text-muted-ink">GST</span>
-                  <span>{inr(detailOrder.taxAmount, { decimals: true })}</span>
+                  <span className="text-muted-ink">Taxable value</span>
+                  <span>{inr(detailOrder.subtotal - detailOrder.discountAmount, { decimals: true })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-ink">{cgstLabel(detailOrder)}</span>
+                  <span>{inr(splitHalf(detailOrder.taxAmount), { decimals: true })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-ink">{sgstLabel(detailOrder)}</span>
+                  <span>{inr(detailOrder.taxAmount - splitHalf(detailOrder.taxAmount), { decimals: true })}</span>
                 </div>
                 <div className="flex justify-between border-t border-line pt-1.5 font-semibold text-pine">
                   <span>Total</span>
@@ -1541,6 +1812,20 @@ export default function PosView() {
                 <button className="btn-outline h-10" onClick={() => window.print()}>
                   <Printer className="h-4 w-4" /> Print KOT
                 </button>
+                <button
+                  className="btn-brass h-10"
+                  onClick={() => {
+                    setBillOrderId(detailOrder.id);
+                    setDetailId(null);
+                  }}
+                >
+                  <ReceiptText className="h-4 w-4" /> Guest Bill
+                </button>
+                {detailOrder.status !== "cancelled" && detailOrder.items.length > 0 && (
+                  <button className="btn-outline h-10" onClick={() => reorder(detailOrder)}>
+                    <Repeat className="h-4 w-4" /> Reorder
+                  </button>
+                )}
                 {detailOrder.paymentStatus === "unpaid" && (
                   <button
                     className="btn-brass h-10"
@@ -1572,6 +1857,247 @@ export default function PosView() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Guest Bill — official restaurant tax invoice (same GST marking as folio invoices) ── */}
+      <Dialog open={!!billOrder} onOpenChange={(open) => !open && setBillOrderId(null)}>
+        <DialogContent className="max-h-[92vh] overflow-y-auto scroll-slim sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ReceiptText className="h-5 w-5 text-brass" /> Guest Bill — Tax Invoice
+            </DialogTitle>
+            <DialogDescription>
+              Official GST format — taxable value, CGST 2.5% + SGST 2.5%, amount in words. Print or download for the guest.
+            </DialogDescription>
+          </DialogHeader>
+
+          {bill && (
+            <>
+              <div id="pos-bill-print" className="rounded-md border border-line bg-panel p-4 font-mono text-[13px] space-y-3">
+                {/* Header */}
+                <div className="text-center space-y-0.5">
+                  <p className="font-display text-base font-bold uppercase tracking-[0.14em] text-pine">
+                    {bill.hotel.name || "Restaurant"}
+                  </p>
+                  <p className="text-[10px] text-muted-ink leading-snug">
+                    {bill.hotel.address}
+                    {bill.hotel.address ? ", " : ""}
+                    {bill.hotel.city}
+                    <br />
+                    GSTIN: <b className="text-ink">{bill.hotel.gstin || "—"}</b>
+                    {bill.hotel.phone ? ` · ${bill.hotel.phone}` : ""}
+                  </p>
+                  <p className="pt-1 text-[10px] font-semibold uppercase tracking-[0.3em] text-brass">Tax Invoice</p>
+                  <p className="font-display text-2xl font-bold text-pine tracking-wide">{bill.billNo}</p>
+                  <p className="text-[11px] text-muted-ink">
+                    {fmtDate(bill.date)} · {bill.orderType === "dine_in" ? `Table ${bill.tableNumber || "—"}` : bill.orderType === "room_service" ? `Room ${bill.roomNumber || "—"}` : "Takeaway"}
+                    {bill.guestName ? ` · ${bill.guestName}` : ""}
+                  </p>
+                  <p className="text-[10px] text-muted-ink">
+                    Place of Supply: {bill.hotel.state || bill.hotel.city || "—"}
+                  </p>
+                </div>
+
+                {/* Items */}
+                <div className="border-t border-dashed border-line-strong pt-2">
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="text-[10px] uppercase tracking-wider text-muted-ink">
+                        <th className="py-1 text-left font-semibold">#</th>
+                        <th className="py-1 text-left font-semibold">Item</th>
+                        <th className="py-1 text-right font-semibold">Qty</th>
+                        <th className="py-1 text-right font-semibold">Rate</th>
+                        <th className="py-1 text-right font-semibold">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bill.items.map((it, idx) => (
+                        <tr key={idx} className="border-t border-line/70 align-top">
+                          <td className="py-1.5 text-muted-ink">{idx + 1}</td>
+                          <td className="py-1.5">
+                            {it.name}
+                            {it.notes && <span className="block text-[10px] font-medium text-warn italic">↳ {it.notes}</span>}
+                          </td>
+                          <td className="py-1.5 text-right">{it.qty}</td>
+                          <td className="py-1.5 text-right">{money2(it.price)}</td>
+                          <td className="py-1.5 text-right">{money2(it.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* GST summary + totals */}
+                <div className="border-t border-dashed border-line-strong pt-2 space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-muted-ink">Gross amount</span>
+                    <span>{money2(bill.subtotal)}</span>
+                  </div>
+                  {bill.discountAmount > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-ink">{discountLabel(bill.discountMode, bill.discountValue)}</span>
+                      <span className="text-danger">−{money2(bill.discountAmount)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-muted-ink">Taxable value</span>
+                    <span>{money2(bill.subtotal - bill.discountAmount)}</span>
+                  </div>
+                  {posRateBreakup(bill.items, bill.discountAmount).map((r) => (
+                    <div key={r.gstRate} className="flex justify-between text-[11px] text-muted-ink">
+                      <span>
+                        CGST @ {r.gstRate / 2}% + SGST @ {r.gstRate / 2}%
+                      </span>
+                      <span>
+                        {money2(splitHalf(r.tax))} + {money2(r.tax - splitHalf(r.tax))} = {money2(r.tax)}
+                      </span>
+                    </div>
+                  ))}
+                  <div className="flex justify-between">
+                    <span className="text-muted-ink">Total GST (CGST + SGST)</span>
+                    <span>{money2(bill.taxAmount)}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-line pt-1.5">
+                    <span className="uppercase tracking-wider">Grand Total</span>
+                    <span className="font-bold text-pine">{money2(bill.totalAmount)}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px] text-muted-ink">
+                    <span>Payment</span>
+                    <span className={bill.paymentStatus === "unpaid" ? "font-semibold uppercase text-danger" : "uppercase text-ink"}>
+                      {bill.paymentStatus === "unpaid"
+                        ? "DUE"
+                        : bill.paymentStatus === "posted_to_folio"
+                          ? "Room Folio"
+                          : bill.paymentMethod || "Paid"}
+                    </span>
+                  </div>
+                </div>
+
+                <p className="border-t border-dashed border-line-strong pt-2 text-[11px] italic text-muted-ink">
+                  <b className="not-italic">Amount in words:</b> {amountInWordsINR(bill.totalAmount)}
+                </p>
+
+                <div className="border-t border-line pt-2 text-center">
+                  <p className="text-[10px] text-muted-ink">
+                    Declaration: This invoice shows the actual price of the food &amp; beverages served. GST is charged on
+                    the discounted taxable value. Computer-generated bill.
+                  </p>
+                  <p className="mt-2 text-[11px] font-semibold text-pine">For {bill.hotel.name || "Restaurant"}</p>
+                  <p className="mt-4 border-t border-line pt-1 text-[9px] uppercase tracking-[0.2em] text-muted-ink">
+                    Authorised Signatory
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button className="btn-outline h-10" onClick={() => window.print()}>
+                  <Printer className="h-4 w-4" /> Print Bill
+                </button>
+                <button className="btn-pine h-10" onClick={downloadBill}>
+                  <Download className="h-4 w-4" /> Download HTML
+                </button>
+                {bill.paymentStatus === "unpaid" && (
+                  <button
+                    className="btn-brass h-10"
+                    onClick={() => {
+                      setSettleTarget(billOrder);
+                      setBillOrderId(null);
+                    }}
+                  >
+                    <Wallet className="h-4 w-4" /> Settle Payment
+                  </button>
+                )}
+                <button className="btn-ghost h-10" onClick={() => setBillOrderId(null)}>
+                  Close
+                </button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Day sales summary — Z-report with GST collection split ── */}
+      <Dialog open={dayOpen} onOpenChange={setDayOpen}>
+        <DialogContent className="max-h-[92vh] overflow-y-auto scroll-slim sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calculator className="h-5 w-5 text-brass" /> Day Sales Summary
+            </DialogTitle>
+            <DialogDescription>Z-report — today&apos;s non-cancelled POS orders with the GST collected.</DialogDescription>
+          </DialogHeader>
+
+          <div id="pos-day-print" className="rounded-md border border-line bg-panel p-4 font-mono text-[13px] space-y-2">
+            <div className="text-center space-y-0.5">
+              <p className="font-display text-sm font-bold uppercase tracking-[0.14em] text-pine">
+                {hotel.name || propertyName || "Restaurant"}
+              </p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-brass">Day Sales Summary (Z-Report)</p>
+              <p className="text-[11px] text-muted-ink">
+                {fmtDate(new Date())} · GSTIN {hotel.gstin || "—"}
+              </p>
+            </div>
+            <div className="border-t border-dashed border-line-strong pt-2 space-y-1">
+              <div className="flex justify-between">
+                <span className="text-muted-ink">Orders</span>
+                <span>{dayStats.count}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-ink">Gross amount</span>
+                <span>{money2(dayStats.gross)}</span>
+              </div>
+              {dayStats.discount > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-ink">Discounts given</span>
+                  <span className="text-danger">−{money2(dayStats.discount)}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-muted-ink">Taxable value</span>
+                <span>{money2(dayStats.taxable)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-ink">CGST collected</span>
+                <span>{money2(splitHalf(dayStats.tax))}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-ink">SGST collected</span>
+                <span>{money2(dayStats.tax - splitHalf(dayStats.tax))}</span>
+              </div>
+              <div className="flex justify-between border-t border-line pt-1.5">
+                <span className="uppercase tracking-wider">Net sales (incl. GST)</span>
+                <span className="font-bold text-pine">{money2(dayStats.net)}</span>
+              </div>
+            </div>
+            <div className="border-t border-dashed border-line-strong pt-2">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-ink">Collections by method</p>
+              {dayStats.byMethod.length === 0 ? (
+                <p className="text-[11px] text-muted-ink">No settled payments yet today.</p>
+              ) : (
+                dayStats.byMethod.map(([m, amt]) => (
+                  <div key={m} className="flex justify-between">
+                    <span className="text-muted-ink">{m}</span>
+                    <span>{money2(amt)}</span>
+                  </div>
+                ))
+              )}
+              {dayStats.unpaid > 0 && (
+                <p className="pt-1 text-[11px] text-warn">{dayStats.unpaid} order(s) still unpaid / unsettled.</p>
+              )}
+            </div>
+            <p className="border-t border-line pt-2 text-center text-[9px] uppercase tracking-[0.2em] text-muted-ink">
+              Computer-generated report — Velurex HMS POS
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button className="btn-outline h-10" onClick={() => window.print()}>
+              <Printer className="h-4 w-4" /> Print Report
+            </button>
+            <button className="btn-ghost h-10" onClick={() => setDayOpen(false)}>
+              Close
+            </button>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -1743,7 +2269,7 @@ export default function PosView() {
                         value={newCat}
                         onValueChange={(v) => {
                           setNewCat(v);
-                          setNewTax(v === "bar" ? "12" : "5");
+                          setNewTax("5");
                         }}
                       >
                         <SelectTrigger className="h-10 w-full">
@@ -1795,6 +2321,9 @@ export default function PosView() {
                           %
                         </span>
                       </div>
+                      <p className="mt-1 text-[10px] leading-snug text-muted-ink">
+                        Flat 5% — CGST 2.5% + SGST 2.5%. Override only for special slabs.
+                      </p>
                     </div>
                     <div className="min-w-0">
                       <span className="field-label">Food type</span>

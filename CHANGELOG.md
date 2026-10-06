@@ -12,6 +12,21 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.8.0] — 2026-10-06 · Official POS GST
+
+### Added — the official way, in the POS
+- **Official GST marking on every POS surface**: the cart totals, KOT receipts and the order-detail bill breakdown now render the exact same structure as the folio tax invoice — gross amount → discount → **taxable value → CGST @ 2.5% → SGST @ 2.5%** → grand total. Labels adapt automatically if an admin ever overrides a dish's slab.
+- **Guest Bill (restaurant tax invoice)**: a new receipt-icon action on every order row (and in the order detail sheet) opens a full official tax invoice — property masthead with **GSTIN**, **Place of Supply**, numbered item table with rate & amount, CGST/SGST rate breakup, **amount in words**, payment status (DUE / method / Room Folio), declaration and authorised signatory — with **Print** and **one-click HTML download** in the same visual language as the folio invoices.
+- **Order-level discounts**: apply **% off or flat ₹** per order, before GST — tax is charged on the *discounted* taxable value (CGST §15, mirroring the promo handling on folio invoices). The math lives in one shared engine (`pos-gst.ts`) used by both the API (authoritative) and the cart (live preview), clamped server-side so no discount can exceed the bill.
+- **Day Sales Summary (Z-report)**: a printable today-so-far report with order count, gross, discounts, taxable value, **CGST/SGST collected**, net sales, collections grouped by payment method (cash / UPI / card / gateways / room folio) and an unpaid-orders warning.
+- **Reorder**: one tap pulls any of today's orders back into the cart — sold-out or removed dishes are skipped and reported in the toast.
+- Menu composer: GST field defaults to the flat **5%** slab with a "CGST 2.5% + SGST 2.5%" hint (removes the old bar-at-12% leftover), and the property's **state** now flows into the bill's Place of Supply via Settings.
+
+### Verified
+- End-to-end QA: 10% discount on ₹740 → taxable ₹666 → CGST ₹16.65 + SGST ₹16.65 → total ₹699.30, identical in cart preview, API, KOT receipt and guest bill; flat discount clamps at the bill total; settle uses the discounted grand total. Zero console errors, zero 5xx.
+
+---
+
 ## [2.7.0] — 2026-10-06 · Flat Five & Instant Payroll
 
 ### Changed — Flat 5% GST across the property
