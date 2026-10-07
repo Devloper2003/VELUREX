@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
 import { inr, fmtTime, fmtDateShort, fmtDate, STATUS_LABELS, amountInWordsINR } from "@/lib/format";
 import { money2, splitHalf } from "@/lib/invoice-format";
-import { computePosTotals, posBillHtml, posRateBreakup, discountLabel, type PosBill } from "@/lib/pos-gst";
+import { computePosTotals, posBillHtml, posRateBreakup, discountLabel, kotPrintHtml, daySummaryPrintHtml, type PosBill, type KotPrintOrder } from "@/lib/pos-gst";
+import { printHtml } from "@/lib/print";
 import { useSession } from "@/lib/store";
 import { useRealtime } from "@/lib/realtime";
 import { useToast } from "@/hooks/use-toast";
@@ -1093,10 +1094,25 @@ export default function PosView() {
     }
   };
 
+  /** Map a live order to the print-builder shape (items carry their menu tax rate). */
+  const toKotPrint = (o: OrderT): KotPrintOrder => ({
+    orderNumber: o.orderNumber,
+    createdAt: o.createdAt,
+    orderType: o.orderType,
+    tableNumber: o.tableNumber,
+    roomNumber: o.roomNumber,
+    subtotal: o.subtotal,
+    discountMode: o.discountMode,
+    discountValue: o.discountValue,
+    discountAmount: o.discountAmount,
+    taxAmount: o.taxAmount,
+    totalAmount: o.totalAmount,
+    items: o.items.map((i) => ({ name: i.name, qty: i.qty, notes: i.notes, taxRate: i.menuItem?.taxRate ?? 5 })),
+  });
+
   // ── Render ──
   return (
     <div className="space-y-4">
-      <style>{`@media print { body * { visibility: hidden !important; } #kot-print, #kot-print * , #kot-print-detail, #kot-print-detail *, #pos-bill-print, #pos-bill-print *, #pos-day-print, #pos-day-print * { visibility: visible !important; } #kot-print, #kot-print-detail, #pos-bill-print, #pos-day-print { position: fixed; inset: 0; padding: 24px; background: #fff; z-index: 9999; } }`}</style>
 
       <div className="grid xl:grid-cols-3 gap-4 items-start">
         {/* ── Left: menu ── */}
@@ -1595,7 +1611,10 @@ export default function PosView() {
               <KotReceipt id="kot-print" order={successOrder} propertyName={propertyName} />
 
               <div className="grid grid-cols-2 gap-2">
-                <button className="btn-outline h-10" onClick={() => window.print()}>
+                <button
+                  className="btn-outline h-10"
+                  onClick={() => printHtml(kotPrintHtml(toKotPrint(successOrder), propertyName), successOrder.orderNumber)}
+                >
                   <Printer className="h-4 w-4" /> Print KOT
                 </button>
                 {successOrder.paymentStatus === "unpaid" ? (
@@ -1809,7 +1828,10 @@ export default function PosView() {
                     <Check className="h-4 w-4" /> Mark served
                   </button>
                 )}
-                <button className="btn-outline h-10" onClick={() => window.print()}>
+                <button
+                  className="btn-outline h-10"
+                  onClick={() => printHtml(kotPrintHtml(toKotPrint(detailOrder), propertyName), detailOrder.orderNumber)}
+                >
                   <Printer className="h-4 w-4" /> Print KOT
                 </button>
                 <button
@@ -1991,7 +2013,10 @@ export default function PosView() {
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                <button className="btn-outline h-10" onClick={() => window.print()}>
+                <button
+                  className="btn-outline h-10"
+                  onClick={() => bill && printHtml(posBillHtml(bill), bill.billNo)}
+                >
                   <Printer className="h-4 w-4" /> Print Bill
                 </button>
                 <button className="btn-pine h-10" onClick={downloadBill}>
@@ -2091,7 +2116,10 @@ export default function PosView() {
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <button className="btn-outline h-10" onClick={() => window.print()}>
+            <button
+              className="btn-outline h-10"
+              onClick={() => printHtml(daySummaryPrintHtml(dayStats, hotel, propertyName), "Day Sales Summary — Z-Report")}
+            >
               <Printer className="h-4 w-4" /> Print Report
             </button>
             <button className="btn-ghost h-10" onClick={() => setDayOpen(false)}>

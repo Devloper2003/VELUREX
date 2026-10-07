@@ -236,3 +236,161 @@ export function posBillHtml(bill: PosBill): string {
   <p class="foot">${esc(bill.hotel.name)} · GSTIN ${esc(bill.hotel.gstin) || "—"} · Bill ${esc(bill.billNo)} — Thank you! Visit again.</p>
 </body></html>`;
 }
+
+// ─── Print documents for the remaining POS surfaces ─────────────────────────
+
+/** Structural shape needed to render a kitchen ticket (superset-compatible with the POS table rows). */
+export interface KotPrintItem {
+  name: string;
+  qty: number;
+  notes?: string | null;
+  taxRate?: number | null;
+}
+
+export interface KotPrintOrder {
+  orderNumber: string;
+  createdAt: string;
+  orderType: string;
+  tableNumber?: string | null;
+  roomNumber?: string | null;
+  subtotal: number;
+  discountMode?: string;
+  discountValue?: number;
+  discountAmount: number;
+  taxAmount: number;
+  totalAmount: number;
+  items: KotPrintItem[];
+}
+
+function kotTypeLine(order: KotPrintOrder): string {
+  if (order.orderType === "dine_in") return `Table ${order.tableNumber || "—"}`;
+  if (order.orderType === "room_service") return `Room ${order.roomNumber || "—"}`;
+  return "Takeaway";
+}
+
+function kotRateLabels(order: KotPrintOrder): { cgst: string; sgst: string } {
+  const rates = new Set(order.items.map((i) => i.taxRate ?? 5));
+  const uniform = rates.size === 1 ? [...rates][0] : null;
+  return uniform === null
+    ? { cgst: "CGST", sgst: "SGST" }
+    : { cgst: `CGST @ ${uniform / 2}%`, sgst: `SGST @ ${uniform / 2}%` };
+}
+
+const PRINT_RECEIPT_CSS = `
+  @page { margin: 8mm; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-family: 'Courier New', ui-monospace, monospace; color: #1c2622; background: #fff;
+    margin: 0 auto; max-width: 78mm; font-size: 13px; line-height: 1.35; }
+  .c { text-align: center; }
+  .brand { font-size: 14px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; color: #0f2622; }
+  .kicker { font-size: 9px; font-weight: 700; letter-spacing: 4px; text-transform: uppercase; color: #b9873e; }
+  .ono { font-size: 26px; font-weight: 800; letter-spacing: 1px; color: #0f2622; }
+  .sub { font-size: 11px; color: #6d6a5c; }
+  .hr { border-top: 1px dashed #9a8f76; margin: 8px 0; }
+  .row { display: flex; justify-content: space-between; gap: 8px; }
+  .row .k { color: #55503f; }
+  .qty { width: 26px; text-align: right; font-weight: 700; color: #b9873e; flex-shrink: 0; }
+  .item { display: flex; gap: 8px; align-items: baseline; }
+  .note { margin: 1px 0 0 34px; font-size: 11px; font-style: italic; color: #a1541d; }
+  .total { border-top: 1px solid #1c2622; padding-top: 6px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; }
+  .grand { font-size: 16px; color: #0f2622; }
+  .foot { text-align: center; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: #6d6a5c; }
+`;
+
+/**
+ * Thermal-style KOT / receipt document — mirrors the on-screen KotReceipt and
+ * prints on both 80mm thermal rolls and A4 (narrow, centered).
+ */
+export function kotPrintHtml(order: KotPrintOrder, propertyName: string): string {
+  const items = order.items
+    .map(
+      (i) => `<div class="item"><span class="qty">${i.qty}×</span><span>${esc(i.name)}</span></div>${
+        i.notes ? `<p class="note">↳ ${esc(i.notes)}</p>` : ""
+      }`
+    )
+    .join("");
+  const labels = kotRateLabels(order);
+  const cgst = splitHalf(order.taxAmount);
+  const time = new Date(order.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"/><title>${esc(order.orderNumber)}</title><style>${PRINT_RECEIPT_CSS}</style></head>
+<body>
+  <div class="c">
+    <div class="brand">${esc(propertyName || "Restaurant")}</div>
+    <div class="kicker">Kitchen Order Ticket</div>
+    <div class="ono">${esc(order.orderNumber)}</div>
+    <div class="sub">${esc(time)} · ${esc(kotTypeLine(order))}</div>
+  </div>
+  <div class="hr"></div>
+  ${items}
+  <div class="hr"></div>
+  <div class="row"><span class="k">Gross amount</span><span>${money2(order.subtotal)}</span></div>
+  ${order.discountAmount > 0 ? `<div class="row"><span class="k">${esc(discountLabel(order.discountMode ?? "none", order.discountValue ?? 0))}</span><span>−${money2(order.discountAmount)}</span></div>` : ""}
+  <div class="row"><span class="k">Taxable value</span><span>${money2(order.subtotal - order.discountAmount)}</span></div>
+  <div class="row"><span class="k">${esc(labels.cgst)}</span><span>${money2(cgst)}</span></div>
+  <div class="row"><span class="k">${esc(labels.sgst)}</span><span>${money2(order.taxAmount - cgst)}</span></div>
+  <div class="hr"></div>
+  <div class="row total grand"><span>Total (incl. GST)</span><span>${money2(order.totalAmount)}</span></div>
+  <div class="hr"></div>
+  <p class="foot">Computer-generated · Velurex HMS POS</p>
+</body></html>`;
+}
+
+/** Shape of the POS day-stats object needed for the Z-report print. */
+export interface DayStatsPrint {
+  count: number;
+  unpaid: number;
+  gross: number;
+  discount: number;
+  taxable: number;
+  tax: number;
+  net: number;
+  byMethod: [string, number][];
+}
+
+/**
+ * Day Sales Summary (Z-report) print document — same figures as the on-screen
+ * dialog, with the CGST/SGST collection split an auditor expects.
+ */
+export function daySummaryPrintHtml(
+  stats: DayStatsPrint,
+  hotel: { name?: string; gstin?: string },
+  propertyName: string
+): string {
+  const cgst = splitHalf(stats.tax);
+  const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const methods = stats.byMethod.length
+    ? stats.byMethod
+        .map(
+          ([m, amt]) =>
+            `<div class="row"><span class="k">${esc(m)}</span><span>${money2(amt)}</span></div>`
+        )
+        .join("")
+    : `<p class="sub">No settled payments yet today.</p>`;
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"/><title>Day Sales Summary — Z-Report</title><style>${PRINT_RECEIPT_CSS}</style></head>
+<body>
+  <div class="c">
+    <div class="brand">${esc(hotel.name || propertyName || "Restaurant")}</div>
+    <div class="kicker">Day Sales Summary (Z-Report)</div>
+    <div class="sub">${esc(today)} · GSTIN ${esc(hotel.gstin) || "—"}</div>
+  </div>
+  <div class="hr"></div>
+  <div class="row"><span class="k">Orders</span><span>${stats.count}</span></div>
+  <div class="row"><span class="k">Gross amount</span><span>${money2(stats.gross)}</span></div>
+  ${stats.discount > 0 ? `<div class="row"><span class="k">Discounts given</span><span>−${money2(stats.discount)}</span></div>` : ""}
+  <div class="row"><span class="k">Taxable value</span><span>${money2(stats.taxable)}</span></div>
+  <div class="row"><span class="k">CGST collected</span><span>${money2(cgst)}</span></div>
+  <div class="row"><span class="k">SGST collected</span><span>${money2(stats.tax - cgst)}</span></div>
+  <div class="hr"></div>
+  <div class="row total grand"><span>Net sales (incl. GST)</span><span>${money2(stats.net)}</span></div>
+  <div class="hr"></div>
+  <div class="kicker" style="letter-spacing:2px">Collections by method</div>
+  ${methods}
+  ${stats.unpaid > 0 ? `<p class="note" style="margin-left:0">${stats.unpaid} order(s) still unpaid / unsettled.</p>` : ""}
+  <div class="hr"></div>
+  <p class="foot">Computer-generated report · Velurex HMS POS</p>
+</body></html>`;
+}

@@ -12,6 +12,23 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.8.1] — 2026-10-07 · Crisp Sheets
+
+### Fixed — invoices now print perfectly
+- **Rebuilt the entire print pipeline.** Every print button used to call `window.print()` on the app shell (or rely on a `visibility:hidden` + `position:fixed` hack that breaks inside dialogs — a transformed ancestor re-anchors the fixed sheet and the dialog's scroll clip truncates it), so printed invoices came out wrapped in navigation/sidebar chrome, on the dark theme, cut off mid-document, or spread over stray blank pages.
+- **New hidden-iframe print pipeline** (`src/lib/print.ts`): each print button now hands a *complete standalone document* to the printer — identical to the Download HTML sheets — with `@page` margins, exact color printing and a proper document title for the print queue. Nothing from the app UI can leak onto paper, and nothing clips.
+- **Print documents added for every surface**:
+  - Folio tax invoice (Billing) and reservation invoice — reuse the shared `invoiceHtml` sheet (GSTIN, HSN/SAC, CGST/SGST breakup, amount in words, declaration, signature block).
+  - Restaurant guest bill — reuse the shared `posBillHtml` sheet.
+  - **KOT — new thermal-style print document** (`kotPrintHtml`) mirroring the on-screen receipt 1:1 (big order number, brass qty column, hanging notes, gross → discount → taxable → **CGST @ 2.5% → SGST @ 2.5%** → total), prints correctly on both 80mm rolls and A4.
+  - **Day Sales Summary — new Z-report print document** (`daySummaryPrintHtml`) with the full CGST/SGST collection split and per-method collections.
+  - Platform-owner SaaS invoices — new standalone print sheet with line items, GST and payment history.
+
+### Verified
+- agent-browser QA on all surfaces: folio invoice (INV-RG-1001 — TAX INVOICE, GSTIN, HSN 996311/996331/998613, amount in words), KOT (CGST @ 2.5% / SGST @ 2.5% / Total incl. GST), guest bill (RESTAURANT TAX INVOICE + signatory) and Z-report (CGST/SGST collected, collections by method) each produced a clean standalone print document with **zero app chrome** and correct GST figures. Zero console errors, zero 4xx/5xx after seed.
+
+---
+
 ## [2.8.0] — 2026-10-06 · Official POS GST
 
 ### Added — the official way, in the POS

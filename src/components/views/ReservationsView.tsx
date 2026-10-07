@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { receiptHtml, type ReceiptPayload } from "@/lib/receipt-html";
 import { invoiceHtml, type InvoicePayload } from "@/lib/invoice-format";
+import { printHtml } from "@/lib/print";
 import { InvoiceDoc } from "@/components/shared/InvoiceDoc";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -400,8 +401,6 @@ export default function ReservationsView() {
 
   return (
     <div className="space-y-4">
-      {/* Invoice print isolation — only the invoice sheet leaves the printer */}
-      <style>{`@media print { body * { visibility: hidden !important; } #inv-print, #inv-print * { visibility: visible !important; } #inv-print { position: fixed; inset: 0; padding: 24px; background: #fff; z-index: 9999; overflow: visible; } }`}</style>
       {/* Toolbar */}
       <div className="panel px-4 py-3 flex flex-col lg:flex-row lg:items-center gap-3">
         <div className="relative lg:w-72">
@@ -702,7 +701,11 @@ export default function ReservationsView() {
             <button className="btn-outline h-9" disabled={!invoiceData} onClick={downloadInvoice}>
               <Download className="h-4 w-4" /> Download
             </button>
-            <button className="btn-pine h-9" disabled={!invoiceData} onClick={() => window.print()}>
+            <button
+              className="btn-pine h-9"
+              disabled={!invoiceData}
+              onClick={() => invoiceData && printHtml(invoiceHtml(invoiceData), invoiceData.invoiceNo)}
+            >
               <Printer className="h-4 w-4" /> Print
             </button>
           </DialogFooter>

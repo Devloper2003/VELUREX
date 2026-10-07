@@ -6,6 +6,7 @@ import { mutate, flushQueue, getQueue } from "@/lib/offline-queue";
 import { inr, fmtDate, fmtDateTime, fmtDateShort, STATUS_LABELS, CATEGORY_LABELS, amountInWordsINR } from "@/lib/format";
 import { receiptHtml, type ReceiptPayload } from "@/lib/receipt-html";
 import { invoiceHtml, esc, money2, type InvoicePayload, type InvoiceLine } from "@/lib/invoice-format";
+import { printHtml } from "@/lib/print";
 import { InvoiceDoc } from "@/components/shared/InvoiceDoc";
 import { useSession } from "@/lib/store";
 import { useToast } from "@/hooks/use-toast";
@@ -940,7 +941,9 @@ export default function BillingView() {
   }
 
   function printInvoice() {
-    window.print();
+    // Print the standalone invoice document through the hidden-frame pipeline —
+    // identical sheet to the Download HTML, no app chrome, no clipping.
+    if (invoice) printHtml(invoiceHtml(invoice), invoice.invoiceNo);
   }
 
   function downloadInvoice() {
@@ -1713,7 +1716,6 @@ export default function BillingView() {
 
               {/* ── Invoice tab ── */}
               <TabsContent value="invoice" className="mt-3">
-                <style>{`@media print { body { background: #fff !important; } }`}</style>
                 <div className="flex items-center justify-end gap-2 mb-3 print:hidden">
                   <button type="button" className="btn-outline" onClick={printInvoice} disabled={!invoice || invoiceLoading}>
                     <Printer className="h-4 w-4" /> Print

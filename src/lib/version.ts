@@ -11,10 +11,10 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.8.0";
+export const APP_VERSION = "2.8.1";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Official POS GST";
-export const APP_RELEASE_DATE = "2026-10-06";
+export const APP_RELEASE_CODENAME = "Crisp Sheets";
+export const APP_RELEASE_DATE = "2026-10-07";
 
 export type ReleaseNote = {
   version: string;
@@ -25,6 +25,16 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.8.1",
+    date: "2026-10-07",
+    codename: "Crisp Sheets",
+    highlights: [
+      "Print pipeline rebuilt — every print button (folio invoice, reservation invoice, POS guest bill, KOT, Z-report, platform invoice) now prints a pixel-perfect standalone sheet through a hidden iframe: no app chrome, no dark theme, no dialog clipping, no stray blank pages",
+      "Thermal-ready KOT & Z-report print documents added, mirroring the on-screen receipts 1:1 including CGST @ 2.5% / SGST @ 2.5% labels",
+      "Platform-owner SaaS invoices gained a matching print document with payments and GST breakdown",
+    ],
+  },
   {
     version: "2.8.0",
     date: "2026-10-06",
