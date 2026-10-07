@@ -12,6 +12,28 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.9.0] — 2026-10-07 · Own Rails
+
+### Added — tenants link their OWN payment gateway; guest money runs on the tenant's rails
+- **Settings → Payments (tenant self-service).** A new settings tab where the *tenant* links their own gateway account — Razorpay, Stripe, Cashfree, PayU, Paytm, PhonePe, plus manual UPI-QR / bank-transfer methods. Until now gateways could only be assigned by the platform owner; the tenant's own account was unreachable. Keys are encrypted at rest (AES-256-GCM, `src/lib/crypto.ts`), masked everywhere in the UI (`rzp_••••••00`) and never returned by the API after saving.
+- **Real charges, not labels.** POS settle, folio "Record Payment" and the public booking widget now create an actual order *at the tenant's gateway* (`POST /api/payments/checkout` → Razorpay Orders API with the tenant's keys), open Razorpay's hosted checkout, and verify the `HMAC(order_id|payment_id)` signature server-side (`POST /api/payments/verify`) before the payment is applied. Previously a "razorpay" payment merely recorded a label — no gateway call, no verification, no money movement evidence.
+- **Hosted payment links** (`POST /api/payments/link`) — staff can generate a Razorpay Payment Link against a folio (guest pays on Razorpay's page via WhatsApp/SMS) and the money still lands in the tenant's account.
+- **Per-gateway webhook** (`POST /api/payments/webhook/[gatewayId]`, public allow-listed, `x-razorpay-signature` verified with the gateway's own webhook secret): `payment.captured` / `order.paid` / `payment_link.paid` auto-finalize pending payments and settle the folio or POS order even when the guest's browser never returns to the app; `payment.failed` marks them failed.
+- **Booking widget upgraded** — `/api/booking-engine/payment-intent` now prefers the property's default online gateway (tenant's keys) over platform env keys, and the public `/book` page opens the *real* Razorpay checkout when the intent is real (hold is released instantly if the guest dismisses the gateway).
+- **Sandbox simulation** — a gateway without a full credential pair runs a clearly-labelled simulated checkout (`order_mock_*` → `pay_mock_*`), so the entire flow stays demoable/testable without live keys; simulation is server-guarded and can never bypass a real credential pair.
+- **Audit & reporting** — `Payment` gained additive `gatewayId` + `gatewayRef` columns (safe for the Neon production sync) so every online payment records which gateway processed it and the provider-side payment id; activity log entries `GATEWAY_PAYMENT` / `GATEWAY_PAYMENT_FAILED` track the full trail.
+- **Test connection** button does a real authenticated round-trip to Razorpay/Stripe from the server and reports credential problems precisely (401 vs network).
+
+### Security
+- Secrets only decrypt server-side at call time; checkout/verify/link endpoints are role-guarded (`hotel_admin`, `front_desk`, `restaurant_staff` for collection; `hotel_admin` only for key management); webhook signature failures return 400 so misconfigurations surface in the gateway dashboard; deleting a gateway with pending payments is refused (409).
+
+### Verified
+- agent-browser QA: gateway linked via Settings (masked key, webhook URL copy, test-connection banner), POS settle via gateway (order → Completed/Paid, toast with `pay_mock_*` ref), folio payment via gateway (balance ₹5,500 → ₹0, Settled), payment history row shows method + gateway reference. Zero console errors, zero page errors.
+- API E2E: login → checkout (`order_mock_*`, pending) → PATCH webhook secret → correctly-signed webhook event → payment `success` with `gatewayRef`, folio balance decremented by the exact amount (8250.00 → 8126.55). Tampered webhook signature → HTTP 400.
+- Responsive: 390px viewport has zero horizontal overflow (fixed a pre-existing Settings tab-bar wrap issue); desktop layout intact.
+
+---
+
 ## [2.8.1] — 2026-10-07 · Crisp Sheets
 
 ### Fixed — invoices now print perfectly

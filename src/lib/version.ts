@@ -11,9 +11,9 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.8.1";
+export const APP_VERSION = "2.9.0";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Crisp Sheets";
+export const APP_RELEASE_CODENAME = "Own Rails";
 export const APP_RELEASE_DATE = "2026-10-07";
 
 export type ReleaseNote = {
@@ -25,6 +25,16 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.9.0",
+    date: "2026-10-07",
+    codename: "Own Rails",
+    highlights: [
+      "Tenants can now link THEIR OWN payment gateway (Razorpay, Stripe, Cashfree, PayU, Paytm, PhonePe + manual UPI/bank methods) from Settings → Payments — guest payments are charged through the tenant's account and settle into the tenant's bank",
+      "Real gateway collection: POS settle, folio payments and the public booking widget create orders at the tenant's gateway with encrypted-at-rest keys (AES-256-GCM), open Razorpay's hosted checkout and verify signatures server-side before applying",
+      "Hosted payment links + per-gateway webhook endpoint (signature-verified) so payments taken on Razorpay pages/mark links auto-settle the folio; sandbox simulation keeps the whole flow demoable without live keys",
+    ],
+  },
   {
     version: "2.8.1",
     date: "2026-10-07",

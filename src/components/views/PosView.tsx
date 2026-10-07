@@ -9,6 +9,7 @@ import { printHtml } from "@/lib/print";
 import { useSession } from "@/lib/store";
 import { useRealtime } from "@/lib/realtime";
 import { useToast } from "@/hooks/use-toast";
+import GatewayCheckoutDialog from "@/components/shared/GatewayCheckoutDialog";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -521,6 +522,7 @@ export default function PosView() {
   const [successOrder, setSuccessOrder] = useState<OrderT | null>(null);
   const [successKotNote, setSuccessKotNote] = useState("");
   const [settleTarget, setSettleTarget] = useState<OrderT | null>(null);
+  const [gwCheckoutOpen, setGwCheckoutOpen] = useState(false);
   const [postingId, setPostingId] = useState<string | null>(null);
 
   // ── Order details — tap any order row to inspect & drive its KOT from this terminal ──
@@ -1676,14 +1678,14 @@ export default function PosView() {
           </div>
           {gateways.length > 0 && (
             <div className="space-y-1.5">
-              <p className="field-label">Online — via your payment gateway</p>
+              <p className="field-label">Online — via your own gateway</p>
               <div className="grid gap-2">
                 {gateways.map((g) => (
                   <button
                     key={g.id}
                     className="btn-outline h-11 justify-start px-3"
-                    title={`${g.mode === "live" ? "Live" : "Test"} mode · configured by the platform owner`}
-                    onClick={() => doSettle(g.provider)}
+                    title={`${g.mode === "live" ? "Live" : "Test"} mode · charged to your gateway account`}
+                    onClick={() => setGwCheckoutOpen(true)}
                   >
                     <CreditCard className="h-4 w-4 text-brass" />
                     <span className="text-sm">Pay via {g.label || gatewayLabel(g.provider)}</span>
@@ -1702,6 +1704,22 @@ export default function PosView() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* ── Gateway checkout — real charge through the tenant's own gateway ── */}
+      <GatewayCheckoutDialog
+        open={gwCheckoutOpen && !!settleTarget}
+        onOpenChange={(open) => {
+          setGwCheckoutOpen(open);
+        }}
+        amount={settleTarget?.totalAmount ?? 0}
+        description={`POS order ${settleTarget?.orderNumber ?? ""}`}
+        posOrderId={settleTarget?.id}
+        onPaid={() => {
+          setGwCheckoutOpen(false);
+          setSettleTarget(null);
+          loadOrders();
+        }}
+      />
 
       {/* ── Order detail dialog — inspect the KOT & drive it from this terminal ── */}
       <Dialog open={!!detailOrder} onOpenChange={(open) => !open && setDetailId(null)}>

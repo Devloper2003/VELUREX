@@ -83,6 +83,10 @@ interface PaymentIntentResponse {
   orderId: string;
   amount: number;
   keyId?: string;
+  provider?: string;
+  gatewayLabel?: string;
+  mode?: string;
+  error?: string;
 }
 interface BookResponse {
   confirmationNumber: string;
@@ -124,6 +128,20 @@ const money = (n: number) =>
   `₹${(Number.isFinite(n) ? n : 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 const money2 = (n: number) =>
   `₹${(Number.isFinite(n) ? n : 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** Lazily load Razorpay's checkout.js once. */
+function loadRazorpayScript(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined") return resolve(false);
+    const w = window as Window & { Razorpay?: unknown };
+    if (w.Razorpay) return resolve(true);
+    const s = document.createElement("script");
+    s.src = "https://checkout.razorpay.com/v1/checkout.js";
+    s.onload = () => resolve(true);
+    s.onerror = () => resolve(false);
+    document.body.appendChild(s);
+  });
+}
 
 function toISODate(d: Date): string {
   const y = d.getFullYear();
@@ -412,19 +430,56 @@ export default function BookPage() {
     setRazorpayBusy(true);
     try {
       if (outcome === "success") {
-        const pr = await fetch("/api/booking-engine/payment-intent", {
+        const pr = await fetch(`/api/booking-engine/payment-intent${storeQs}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ amount: hold.grandTotal, name: guest.fullName, phone: guest.phone, email: guest.email }),
         });
         const intent = (await pr.json()) as PaymentIntentResponse;
-        // Demo gateway: simulate the authorization round-trip (real keys
-        // would open Razorpay's checkout.js with intent.orderId + keyId).
-        await new Promise((res) => setTimeout(res, 1100));
+        let gatewayRef = intent.orderId;
+
+        if (!intent.mock && intent.keyId && intent.orderId) {
+          // REAL charge through the hotel's own gateway — Razorpay's secure
+          // modal opens; resolve with the payment id, or null if dismissed.
+          const ready = await loadRazorpayScript();
+          const w = window as Window & { Razorpay?: new (opts: Record<string, unknown>) => { open: () => void } };
+          if (!ready || !w.Razorpay) throw new Error("Could not load the payment checkout — check your connection and retry.");
+          const payId = await new Promise<string | null>((resolve) => {
+            const rzp = new w.Razorpay!({
+              key: intent.keyId,
+              order_id: intent.orderId,
+              amount: Math.round(hold.grandTotal * 100),
+              currency: "INR",
+              name: hotelName,
+              description: `Stay at ${hotelName}`,
+              prefill: { name: guest.fullName, contact: guest.phone, email: guest.email || undefined },
+              theme: { color: "#17352c" },
+              modal: { ondismiss: () => resolve(null) },
+              handler: (resp: { razorpay_payment_id?: string }) => resolve(resp.razorpay_payment_id || null),
+            });
+            rzp.open();
+          });
+          if (!payId) {
+            // Guest closed the gateway modal — release the room instantly.
+            await fetch("/api/booking-engine/pay", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ holdId: hold.holdId, outcome: "release" }),
+            });
+            setRazorpayOpen(false);
+            setHold(null);
+            return;
+          }
+          gatewayRef = payId;
+        } else {
+          // Demo gateway: simulate the authorization round-trip.
+          await new Promise((res) => setTimeout(res, 1100));
+        }
+
         const pay = await fetch("/api/booking-engine/pay", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ holdId: hold.holdId, outcome: "success", gatewayRef: intent.orderId }),
+          body: JSON.stringify({ holdId: hold.holdId, outcome: "success", gatewayRef }),
         });
         const d = (await pay.json()) as {
           outcome?: string; duplicate?: boolean;

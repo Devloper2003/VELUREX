@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import WhatsAppConnectPanel from "@/components/views/WhatsAppConnectPanel";
 import TwoFactorCard from "@/components/auth/TwoFactorCard";
+import PaymentGatewaysSettings from "@/components/views/settings/PaymentGatewaysSettings";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -226,7 +227,7 @@ export default function SettingsView() {
   const [activitiesLoading, setActivitiesLoading] = useState(false);
 
   // Top-level settings navigation (Property / Staff / Audit Trail)
-  const [topTab, setTopTab] = useState<"property" | "staff" | "whatsapp" | "audit">("property");
+  const [topTab, setTopTab] = useState<"property" | "staff" | "whatsapp" | "payments" | "audit">("property");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -545,13 +546,14 @@ export default function SettingsView() {
 
   const gp = form.googleProfile ?? { connected: false };
 
-  const TOP_TITLES: Record<"property" | "staff" | "whatsapp" | "audit", { title: string; sub: string }> = {
+  const TOP_TITLES: Record<"property" | "staff" | "whatsapp" | "payments" | "audit", { title: string; sub: string }> = {
     property: {
       title: "Property Configuration",
       sub: "Manage your hotel's basic information, address, GST details and other essential settings.",
     },
     staff: { title: "Staff Accounts", sub: "Team access, roles and account status." },
     whatsapp: { title: "WhatsApp Cloud API", sub: "Connect your own WhatsApp Business number for guest messaging." },
+    payments: { title: "Payment Gateways", sub: "Link your own gateway — guest payments are charged to your account and settle into your bank." },
     audit: { title: "Audit Trail", sub: "Every action across the property, logged." },
   };
   const topTitle = TOP_TITLES[topTab];
@@ -574,21 +576,22 @@ export default function SettingsView() {
     <div className="space-y-4">
       {/* ── Header + top nav + Tenant ID ───────────────────────────────── */}
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <h1 className="font-display text-[22px] font-semibold text-pine tracking-tight leading-tight">{topTitle.title}</h1>
           <p className="text-[12.5px] text-muted-ink mt-0.5">{topTitle.sub}</p>
-          <div className="inline-flex rounded-lg border border-line-strong bg-plaster-deep/50 p-1 gap-1 mt-3" role="tablist" aria-label="Settings sections">
+          <div className="flex flex-wrap rounded-lg border border-line-strong bg-plaster-deep/50 p-1 gap-1 mt-3" role="tablist" aria-label="Settings sections">
             {([
               ["property", "Property"],
               ...(data.canManageStaff ? [["staff", "Staff"]] : []),
               ...(isAdmin ? [["whatsapp", "WhatsApp API"]] : []),
+              ["payments", "Payments"],
               ["audit", "Audit Trail"],
             ] as [string, string][]).map(([key, label]) => (
               <button
                 key={key}
                 role="tab"
                 aria-selected={topTab === key}
-                onClick={() => setTopTab(key as "property" | "staff" | "whatsapp" | "audit")}
+                onClick={() => setTopTab(key as "property" | "staff" | "whatsapp" | "payments" | "audit")}
                 className={cn(
                   "h-7 px-3 rounded-md text-[12px] font-medium transition",
                   topTab === key ? "bg-pine-700 text-panel" : "text-muted-ink hover:text-pine"
@@ -1272,6 +1275,9 @@ export default function SettingsView() {
 
       {/* ── WhatsApp Cloud API self-service connect ─────────────────── */}
       {topTab === "whatsapp" && isAdmin && <WhatsAppConnectPanel isAdmin={isAdmin} />}
+
+      {/* ── Payment gateways — tenant links their OWN account ───────── */}
+      {topTab === "payments" && <PaymentGatewaysSettings isAdmin={isAdmin} />}
 
       {/* ── Audit trail ──────────────────────────────────────────────── */}
       {topTab === "audit" && (

@@ -276,9 +276,11 @@ model Payment {
   reservationId String?
   posOrderId    String?
   amount        Float
-  method        String // cash | upi | card | netbanking | razorpay
+  method        String // cash | upi | card | netbanking | razorpay | <gateway provider>
   status        String    @default("success") // pending | success | failed | refund
-  reference     String    @default("")
+  reference     String    @default("") // gateway order/link id for online payments
+  gatewayId     String    @default("") // PaymentGateway row that processed an online payment
+  gatewayRef    String    @default("") // provider-side payment id (e.g. Razorpay pay_XXX)
   receivedBy    String    @default("")
   clientRef     String    @default("") // idempotency key for offline sync
   createdAt     DateTime  @default(now())

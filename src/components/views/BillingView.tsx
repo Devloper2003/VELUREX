@@ -12,6 +12,7 @@ import { useSession } from "@/lib/store";
 import { useToast } from "@/hooks/use-toast";
 import { useRealtime, type RealtimeStatus } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
+import GatewayCheckoutDialog from "@/components/shared/GatewayCheckoutDialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -355,6 +356,8 @@ export default function BillingView() {
   const [payAmount, setPayAmount] = useState("");
   const [payMethod, setPayMethod] = useState("cash");
   const [payReference, setPayReference] = useState("");
+  // Active tenant-gateway collection ("online:<gatewayId>") from the pay dialog
+  const [gwPay, setGwPay] = useState<{ id: string; amount: number; reservationId: string; description: string } | null>(null);
 
   // Online payment gateways assigned to this property by the platform owner
   const [gateways, setGateways] = useState<GatewayInfo[]>([]);
@@ -895,6 +898,20 @@ export default function BillingView() {
     if (!detail) return;
     const amount = Number(payAmount);
     if (!Number.isFinite(amount) || amount <= 0) return toast({ title: "Enter a valid amount", variant: "destructive" });
+    // Gateway-backed method ("online:<gatewayId>") → charge through the
+    // TENANT's own gateway (real Razorpay checkout / sandbox simulation).
+    if (payMethod.startsWith("online:")) {
+      const gwId = payMethod.slice("online:".length);
+      const gw = gateways.find((g) => g.id === gwId);
+      if (!gw) return toast({ title: "Gateway unavailable", description: "Pick another method.", variant: "destructive" });
+      setGwPay({
+        id: gwId,
+        amount: round2(amount),
+        reservationId: detail.reservation.id,
+        description: `Folio · ${detail.reservation.guest.fullName} · Room ${detail.reservation.room?.number ?? "—"}`,
+      });
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -1919,9 +1936,9 @@ export default function BillingView() {
                   ))}
                   {gateways.length > 0 && (
                     <SelectGroup>
-                      <SelectLabel>Online gateway</SelectLabel>
+                      <SelectLabel>Online — your gateway (real charge)</SelectLabel>
                       {gateways.map((g) => (
-                        <SelectItem key={g.id} value={g.provider}>
+                        <SelectItem key={g.id} value={`online:${g.id}`}>
                           {(g.label || gatewayLabel(g.provider)).toUpperCase()}{g.mode === "live" ? " · LIVE" : " · TEST"}
                         </SelectItem>
                       ))}
@@ -1948,6 +1965,23 @@ export default function BillingView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Gateway checkout — real charge through the tenant's own gateway ── */}
+      <GatewayCheckoutDialog
+        open={!!gwPay}
+        onOpenChange={(open) => {
+          if (!open) setGwPay(null);
+        }}
+        amount={gwPay?.amount ?? 0}
+        description={gwPay?.description ?? "Folio payment"}
+        reservationId={gwPay?.reservationId}
+        gatewayId={gwPay?.id}
+        onPaid={() => {
+          setGwPay(null);
+          setPayOpen(false);
+          refresh();
+        }}
+      />
 
       {/* ── Group payment collection ── */}
       <Dialog open={groupPayOpen} onOpenChange={setGroupPayOpen}>
