@@ -12,6 +12,20 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.9.3] — 2026-10-08 · Steady Hand
+
+### Fixed — gateway test survives Razorpay's rate limiter (HTTP 429)
+- **429 resolved with transparent retry.** After linking a gateway, "Test connection" could fail with *"Razorpay responded with HTTP 429"* — Razorpay rate-limits a key that receives too many requests in a short window (repeated test clicks, or a key shared with another busy system). All gateway API calls now run through a small retry helper (`src/lib/http-429.ts`): a `429` is retried up to twice with capped backoff (honouring Razorpay's `Retry-After` hint, never sleeping longer than ~2.2s per attempt) before surfacing. A 429 is always safe to retry — the gateway did not process the request, so there is no double-charge risk.
+- **A message that tells you what to do.** When Razorpay still throttles after the retries, the result now reads *"Razorpay rate-limited this key (HTTP 429 — too many requests in a short window). Wait about a minute and test again; the saved keys are not the problem. If it keeps happening, another system may be sharing this key."* — instead of the bare status code.
+- **Rate-limit-proof test button.** The Test connection button now cools down for 20 seconds after every attempt (a live "Retry in Ns" countdown, disabled while counting) so rapid clicking can no longer trip the gateway's limiter in the first place.
+- **Money paths covered too.** Razorpay order creation (POS/folio/booking checkout) and hosted payment-link creation use the same retry and return *"Razorpay is busy (rate limit) — wait about a minute and try the payment again."* Stripe's connection test got the identical treatment.
+
+### Verified
+- Unit: `fetchRetry429` with stubbed fetch — 429→429→200 recovers in 3 attempts with capped waits; persistent 429 returns the last response without throwing; immediate 200 makes exactly one call.
+- Browser QA (Settings → Payments): link gateway with dummy keys → "Gateway linked" → Test connection → button instantly shows disabled "Retry in 20s" countdown, inline 401 message from the real API round-trip appears alongside, countdown ticks to expiry and the button re-enables. Zero console errors.
+
+---
+
 ## [2.9.2] — 2026-10-08 · Plug Proof
 
 ### Fixed — "Test connection" works: the missing test endpoint exists now

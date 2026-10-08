@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { db } from "@/lib/db";
 import { decryptJSON } from "@/lib/crypto";
 import { logActivity } from "@/lib/business";
+import { fetchRetry429 } from "@/lib/http-429";
 
 /**
  * Tenant-owned payment gateway integration.
@@ -168,7 +169,7 @@ export async function createRazorpayOrder(
     return { ok: true, mock: true, orderId: `order_mock_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}` };
   }
   try {
-    const res = await fetch(`${RZP_API}/orders`, {
+    const res = await fetchRetry429(`${RZP_API}/orders`, {
       method: "POST",
       headers: { Authorization: rzpAuth(c), "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -181,6 +182,7 @@ export async function createRazorpayOrder(
     });
     const d = (await res.json().catch(() => ({}))) as { id?: string; error?: { description?: string } };
     if (res.ok && d.id) return { ok: true, orderId: d.id };
+    if (res.status === 429) return { ok: false, error: "Razorpay is busy (rate limit) — wait about a minute and try the payment again." };
     return { ok: false, error: d.error?.description || `Razorpay rejected the order (HTTP ${res.status})` };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? `Could not reach Razorpay: ${e.message}` : "Could not reach Razorpay" };
@@ -204,7 +206,7 @@ export async function createRazorpayPaymentLink(
   if (!c.keyId || !c.keySecret) return { ok: false, error: "This gateway has no API keys saved yet — open Settings → Payments and save the Key ID + Key Secret first." };
   const customer = opts.customer.phone || opts.customer.email ? opts.customer : undefined;
   try {
-    const res = await fetch(`${RZP_API}/payment_links`, {
+    const res = await fetchRetry429(`${RZP_API}/payment_links`, {
       method: "POST",
       headers: { Authorization: rzpAuth(c), "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -222,6 +224,7 @@ export async function createRazorpayPaymentLink(
     });
     const d = (await res.json().catch(() => ({}))) as { id?: string; short_url?: string; error?: { description?: string } };
     if (res.ok && d.id && d.short_url) return { ok: true, linkId: d.id, shortUrl: d.short_url };
+    if (res.status === 429) return { ok: false, error: "Razorpay is busy (rate limit) — wait about a minute and create the link again." };
     return { ok: false, error: d.error?.description || `Razorpay rejected the payment link (HTTP ${res.status})` };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? `Could not reach Razorpay: ${e.message}` : "Could not reach Razorpay" };
@@ -262,12 +265,17 @@ export async function testGatewayConnection(g: { provider: string; merchantId: s
   if (g.provider === "razorpay") {
     if (!c.keyId || !c.keySecret) return { ok: false, message: "Save both the Key ID and Key Secret first, then test again." };
     try {
-      const res = await fetch(`${RZP_API}/orders?count=1`, {
+      const res = await fetchRetry429(`${RZP_API}/orders?count=1`, {
         headers: { Authorization: rzpAuth(c) },
         signal: AbortSignal.timeout(10000),
       });
       if (res.ok) return { ok: true, message: `Connected — Razorpay accepted these ${g.mode.toUpperCase()} credentials.` };
       if (res.status === 401) return { ok: false, message: "Razorpay rejected these credentials (401 Unauthorized) — re-check the Key ID / Key Secret pair." };
+      if (res.status === 429)
+        return {
+          ok: false,
+          message: "Razorpay rate-limited this key (HTTP 429 — too many requests in a short window). Wait about a minute and test again; the saved keys are not the problem. If it keeps happening, another system may be sharing this key.",
+        };
       return { ok: false, message: `Razorpay responded with HTTP ${res.status}.` };
     } catch (e) {
       return { ok: false, message: `Could not reach Razorpay from the server${e instanceof Error ? `: ${e.message}` : ""}.` };
@@ -277,12 +285,17 @@ export async function testGatewayConnection(g: { provider: string; merchantId: s
   if (g.provider === "stripe") {
     if (!c.keySecret) return { ok: false, message: "Save the Stripe Secret Key first, then test again." };
     try {
-      const res = await fetch("https://api.stripe.com/v1/balance", {
+      const res = await fetchRetry429("https://api.stripe.com/v1/balance", {
         headers: { Authorization: `Bearer ${c.keySecret}` },
         signal: AbortSignal.timeout(10000),
       });
       if (res.ok) return { ok: true, message: `Connected — Stripe accepted this ${g.mode.toUpperCase()} secret key.` };
       if (res.status === 401) return { ok: false, message: "Stripe rejected this secret key (401) — re-check it." };
+      if (res.status === 429)
+        return {
+          ok: false,
+          message: "Stripe rate-limited this key (HTTP 429). Wait about a minute and test again; the saved key is not the problem.",
+        };
       return { ok: false, message: `Stripe responded with HTTP ${res.status}.` };
     } catch (e) {
       return { ok: false, message: `Could not reach Stripe from the server${e instanceof Error ? `: ${e.message}` : ""}.` };

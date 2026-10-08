@@ -11,9 +11,9 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.9.2";
+export const APP_VERSION = "2.9.3";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Plug Proof";
+export const APP_RELEASE_CODENAME = "Steady Hand";
 export const APP_RELEASE_DATE = "2026-10-08";
 
 export type ReleaseNote = {
@@ -25,6 +25,16 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.9.3",
+    date: "2026-10-08",
+    codename: "Steady Hand",
+    highlights: [
+      "Fixed: gateway Test connection failing with \"Razorpay responded with HTTP 429\" — Razorpay rate-limits keys that get too many requests in a short window (e.g. repeated test clicks); the server now transparently retries a 429 with capped backoff (honouring Retry-After) before giving up, and the failure message explains exactly what to do — wait a minute and test again, the saved keys are not the problem",
+      "Test-connection button now cools down for 20s after every attempt (Retry in Ns countdown) so rapid clicks can no longer trip the gateway's rate limiter",
+      "Razorpay order creation and hosted payment-link creation got the same 429 retry + a clear \"Razorpay is busy (rate limit) — wait about a minute\" message instead of a bare HTTP error",
+    ],
+  },
   {
     version: "2.9.2",
     date: "2026-10-08",

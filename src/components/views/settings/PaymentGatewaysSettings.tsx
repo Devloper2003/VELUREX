@@ -75,6 +75,16 @@ export default function PaymentGatewaysSettings({ isAdmin }: { isAdmin: boolean 
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Cooldown after each test click: gateways (Razorpay/Stripe) rate-limit keys
+  // hammered with requests (HTTP 429) — space the attempts out.
+  const TEST_COOLDOWN_MS = 20_000;
+  const [cooldownUntil, setCooldownUntil] = useState<Record<string, number>>({});
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!Object.values(cooldownUntil).some((t) => t > Date.now())) return;
+    const iv = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(iv);
+  }, [cooldownUntil]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -149,6 +159,7 @@ export default function PaymentGatewaysSettings({ isAdmin }: { isAdmin: boolean 
 
   const test = async (g: GatewayRow) => {
     setTestingId(g.id);
+    setCooldownUntil((prev) => ({ ...prev, [g.id]: Date.now() + TEST_COOLDOWN_MS }));
     try {
       const r = await api<{ ok: boolean; message: string }>(`/api/settings/payment-gateways/${g.id}/test-connection`, { method: "POST" });
       setTestResult((prev) => ({ ...prev, [g.id]: r }));
@@ -350,10 +361,21 @@ export default function PaymentGatewaysSettings({ isAdmin }: { isAdmin: boolean 
 
                   {isAdmin && (
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <button className="btn-outline h-7 px-2.5 text-[11.5px]" onClick={() => test(g)} disabled={testingId === g.id}>
-                        {testingId === g.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <PlugZap className="h-3 w-3" />}
-                        Test connection
-                      </button>
+                      {(() => {
+                        const cdLeft = Math.max(0, Math.ceil(((cooldownUntil[g.id] ?? 0) - Date.now()) / 1000));
+                        const busy = testingId === g.id;
+                        return (
+                          <button
+                            className="btn-outline h-7 px-2.5 text-[11.5px]"
+                            onClick={() => test(g)}
+                            disabled={busy || cdLeft > 0}
+                            title={cdLeft > 0 ? "Gateways rate-limit rapid test attempts — wait a moment" : undefined}
+                          >
+                            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <PlugZap className="h-3 w-3" />}
+                            {busy ? "Testing…" : cdLeft > 0 ? `Retry in ${cdLeft}s` : "Test connection"}
+                          </button>
+                        );
+                      })()}
                       <button className="btn-ghost h-7 px-2.5 text-[11.5px]" onClick={() => openEdit(g)}>
                         <Pencil className="h-3 w-3" /> Edit
                       </button>
