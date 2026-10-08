@@ -6,6 +6,7 @@ import { emitRealtime } from "@/lib/realtime-server";
 import { getTenantEntitlements, requireFeature, assertWritable } from "@/lib/entitlements";
 import { broadcastKot } from "@/lib/kot-broadcast";
 import { computePosTotals } from "@/lib/pos-gst";
+import { handleRoute } from "@/lib/route-error";
 
 const ORDER_TYPES = ["dine_in", "room_service", "takeaway"];
 const POS_ROLES: Role[] = ["hotel_admin", "restaurant_staff", "front_desk"];
@@ -27,6 +28,10 @@ const FULL_INCLUDE = {
  * active=1 → status in [pending, preparing, served]; today=1 → createdAt ≥ start of today.
  */
 export async function GET(req: NextRequest) {
+  return handleRoute("pos.ordersList", () => ordersGet(req));
+}
+
+async function ordersGet(req: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(req, POS_ROLES);
   if ("error" in auth) return auth.error;
   const propertyId = auth.session.propertyId;
@@ -62,6 +67,10 @@ export async function GET(req: NextRequest) {
  * body: { orderType, tableNumber?, roomNumber?, reservationId?, guestName?, items: [{ menuItemId, qty, notes? }] }
  */
 export async function POST(req: NextRequest) {
+  return handleRoute("pos.ordersCreate", () => ordersPost(req));
+}
+
+async function ordersPost(req: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(req, POS_ROLES);
   if ("error" in auth) return auth.error;
   const propertyId = auth.session.propertyId;

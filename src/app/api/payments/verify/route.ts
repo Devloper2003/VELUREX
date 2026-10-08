@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
+import { handleRoute } from "@/lib/route-error";
 import {
   failGatewayPayment,
   finalizeGatewayPayment,
@@ -25,6 +26,10 @@ import {
 const ROLES = ["hotel_admin", "front_desk", "restaurant_staff"];
 
 export async function POST(req: NextRequest) {
+  return handleRoute("payments.verify", () => verifyPost(req));
+}
+
+async function verifyPost(req: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(req, ROLES);
   if ("error" in auth) return auth.error;
   const propertyId = auth.session.propertyId;

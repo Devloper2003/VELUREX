@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/auth";
 import { logActivity } from "@/lib/business";
 import { emitRealtime } from "@/lib/realtime-server";
 import { round2 } from "@/app/api/invoice/_shared";
+import { handleRoute } from "@/lib/route-error";
 
 /**
  * POST /api/groups/[code]/payment — collect a payment against a group.
@@ -26,6 +27,13 @@ const PAYMENT_METHODS = ["cash", "upi", "card", "netbanking", "razorpay"];
 const toPaise = (r: number) => Math.round(r * 100);
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ code: string }> }) {
+  return handleRoute("groups.payment", () => groupPayPost(req, { params }));
+}
+
+async function groupPayPost(
+  req: NextRequest,
+  { params }: { params: Promise<{ code: string }> }
+): Promise<NextResponse> {
   const auth = await requireAuth(req, ["hotel_admin", "front_desk"]);
   if ("error" in auth) return auth.error;
   const propertyId = auth.session.propertyId;

@@ -12,6 +12,20 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.9.1] — 2026-10-08 · Settle Sure
+
+### Fixed — payments work again in production + errors you can actually read
+- **Production payment 500 resolved.** Every payment mode (POS settle Cash/UPI/Card, folio "Record Payment", booking-widget payments) failed with `Settle failed — Request failed (500)` on the production database: the v2.9.0 release added `Payment.gatewayId` / `Payment.gatewayRef` columns but the production database had not received that additive migration yet, so every `Payment` write crashed. The guarded additive patch (`ADD COLUMN IF NOT EXISTS`) has been applied to production — zero data touched, payments verified working.
+- **Money-path APIs hardened.** All payment routes (POS settle, post-to-folio, folio GET/POST, gateway checkout & verify, booking payment-intent, group payments, POS order create/list) now run inside a shared error wrapper (`src/lib/route-error.ts`) that translates database failures into precise, actionable messages: a schema-drift `500` becomes a `503` that names the missing column and the fix, unique-constraint conflicts return `409`, record-not-found returns `404`, and connection failures return a `503` pointing at `DATABASE_URL` — no more blind "Request failed (500)" toasts.
+- **Double-pay guard on the settle dialog.** The Cash/UPI/Card buttons now disable with a "Paying…" spinner while the charge is in flight (and the server already rejects a second settle on a paid order), so a double-click can never fire two payments.
+
+### Verified
+- Local end-to-end: orders settled via UPI, Cash and Card (all `200 · paid`), double-settle cleanly rejected (`400 · "Order is already paid"`), unknown order returns `404`.
+- Browser QA: full golden path (add to cart → send to kitchen → settle via UPI) with the "Settled via UPI" toast, orders flipping to Completed + Paid, zero console errors.
+- Production database: `Payment` table now carries `gatewayId`/`gatewayRef`; `PaymentGateway` and all key tables present.
+
+---
+
 ## [2.9.0] — 2026-10-07 · Own Rails
 
 ### Added — tenants link their OWN payment gateway; guest money runs on the tenant's rails

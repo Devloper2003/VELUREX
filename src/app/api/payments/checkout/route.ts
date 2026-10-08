@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { createRazorpayOrder, gatewayCreds, isOnlineProvider } from "@/lib/payment-gateways";
+import { handleRoute } from "@/lib/route-error";
 
 /**
  * POST /api/payments/checkout — start an online collection through the
@@ -19,6 +20,10 @@ const ROLES = ["hotel_admin", "front_desk", "restaurant_staff"];
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export async function POST(req: NextRequest) {
+  return handleRoute("payments.checkout", () => checkoutPost(req));
+}
+
+async function checkoutPost(req: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(req, ROLES);
   if ("error" in auth) return auth.error;
   const propertyId = auth.session.propertyId;

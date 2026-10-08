@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { logActivity } from "@/lib/business";
 import { emitRealtime } from "@/lib/realtime-server";
+import { handleRoute } from "@/lib/route-error";
 
 const CHARGE_CATEGORIES = ["room", "fnb", "laundry", "misc", "bar", "discount", "no_show"];
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -34,6 +35,10 @@ async function computeTotals(reservationId: string) {
  * Body: { reservationId, category, description, qty, rate }
  */
 export async function GET(req: NextRequest) {
+  return handleRoute("folio.get", () => folioGet(req));
+}
+
+async function folioGet(req: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(req);
   if ("error" in auth) return auth.error;
   const propertyId = auth.session.propertyId;
@@ -169,6 +174,10 @@ export async function GET(req: NextRequest) {
  * Body: { reservationId, category, description, qty, rate }
  */
 export async function POST(req: NextRequest) {
+  return handleRoute("folio.postCharge", () => folioPost(req));
+}
+
+async function folioPost(req: NextRequest): Promise<NextResponse> {
   const auth = await requireAuth(req, ["hotel_admin", "front_desk"]);
   if ("error" in auth) return auth.error;
   const propertyId = auth.session.propertyId;

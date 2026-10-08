@@ -11,10 +11,10 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.9.0";
+export const APP_VERSION = "2.9.1";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Own Rails";
-export const APP_RELEASE_DATE = "2026-10-07";
+export const APP_RELEASE_CODENAME = "Settle Sure";
+export const APP_RELEASE_DATE = "2026-10-08";
 
 export type ReleaseNote = {
   version: string;
@@ -25,6 +25,16 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.9.1",
+    date: "2026-10-08",
+    codename: "Settle Sure",
+    highlights: [
+      "Fixed: production 500 on every payment (POS settle cash/UPI/card, folio payments, booking payments) — the v2.9.0 gateway columns were missing on the production database; the additive migration has been applied and payments work again",
+      "Payment routes hardened — every money-path API (POS settle, post-to-folio, folio charges, gateway checkout/verify, booking payment-intent, group payments) now returns precise, actionable JSON errors instead of an opaque \"Request failed (500)\", including a dedicated \"schema out of sync\" message if a deployment ever runs ahead of its database again",
+      "Settle dialog double-pay guard — payment buttons disable with a Paying… spinner while the charge is in flight, so a double-click can never fire two payments",
+    ],
+  },
   {
     version: "2.9.0",
     date: "2026-10-07",

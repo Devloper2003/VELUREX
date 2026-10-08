@@ -522,6 +522,7 @@ export default function PosView() {
   const [successOrder, setSuccessOrder] = useState<OrderT | null>(null);
   const [successKotNote, setSuccessKotNote] = useState("");
   const [settleTarget, setSettleTarget] = useState<OrderT | null>(null);
+  const [settling, setSettling] = useState<string | null>(null); // payment method in flight — guards double-pay
   const [gwCheckoutOpen, setGwCheckoutOpen] = useState(false);
   const [postingId, setPostingId] = useState<string | null>(null);
 
@@ -796,7 +797,8 @@ export default function PosView() {
   };
 
   const doSettle = async (method: string) => {
-    if (!settleTarget) return;
+    if (!settleTarget || settling) return;
+    setSettling(method);
     try {
       await api(`/api/pos/orders/${settleTarget.id}/settle`, {
         method: "POST",
@@ -810,6 +812,8 @@ export default function PosView() {
       loadOrders();
     } catch (e) {
       toast({ title: "Settle failed", description: errMsg(e), variant: "destructive" });
+    } finally {
+      setSettling(null);
     }
   };
 
@@ -1668,11 +1672,16 @@ export default function PosView() {
             ].map((m) => (
               <button
                 key={m.key}
-                className="btn-outline h-16 flex-col gap-1"
+                className="btn-outline h-16 flex-col gap-1 disabled:opacity-60 disabled:pointer-events-none"
+                disabled={!!settling}
                 onClick={() => doSettle(m.key)}
               >
-                <m.icon className="h-5 w-5" />
-                <span className="text-xs">{m.label}</span>
+                {settling === m.key ? (
+                  <span className="h-5 w-5 animate-spin rounded-full border-2 border-brass border-t-transparent" aria-label="Processing" />
+                ) : (
+                  <m.icon className="h-5 w-5" />
+                )}
+                <span className="text-xs">{settling === m.key ? "Paying…" : m.label}</span>
               </button>
             ))}
           </div>
@@ -1683,7 +1692,8 @@ export default function PosView() {
                 {gateways.map((g) => (
                   <button
                     key={g.id}
-                    className="btn-outline h-11 justify-start px-3"
+                    className="btn-outline h-11 justify-start px-3 disabled:opacity-60 disabled:pointer-events-none"
+                    disabled={!!settling}
                     title={`${g.mode === "live" ? "Live" : "Test"} mode · charged to your gateway account`}
                     onClick={() => setGwCheckoutOpen(true)}
                   >

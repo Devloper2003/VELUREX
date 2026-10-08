@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { logActivity } from "@/lib/business";
+import { handleRoute } from "@/lib/route-error";
 
 const METHODS = ["cash", "upi", "card"];
 
@@ -27,6 +28,7 @@ const FULL_INCLUDE = {
  * body: { method: "cash" | "upi" | "card" }
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  return handleRoute("pos.settle", async () => {
   const auth = await requireAuth(req, ["hotel_admin", "restaurant_staff", "front_desk"]);
   if ("error" in auth) return auth.error;
   const propertyId = auth.session.propertyId;
@@ -76,4 +78,5 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   });
 
   return NextResponse.json({ order: updated, payment });
+  });
 }

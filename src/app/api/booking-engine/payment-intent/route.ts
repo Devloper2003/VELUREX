@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getPrimaryProperty } from "../_shared";
 import { round2 } from "../_shared";
 import { createRazorpayOrder, gatewayCreds, isOnlineProvider } from "@/lib/payment-gateways";
+import { handleRoute } from "@/lib/route-error";
 
 /**
  * POST /api/booking-engine/payment-intent — public: creates the payment order
@@ -16,6 +17,10 @@ import { createRazorpayOrder, gatewayCreds, isOnlineProvider } from "@/lib/payme
  * Always 200.
  */
 export async function POST(req: NextRequest) {
+  return handleRoute("booking.paymentIntent", () => paymentIntentPost(req));
+}
+
+async function paymentIntentPost(req: NextRequest): Promise<NextResponse> {
   const body = (await req.json().catch(() => null)) as
     | { amount?: number; name?: string; phone?: string; email?: string }
     | null;

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { logActivity } from "@/lib/business";
 import { emitRealtime } from "@/lib/realtime-server";
+import { handleRoute } from "@/lib/route-error";
 
 const FULL_INCLUDE = {
   items: { include: { menuItem: true } },
@@ -16,6 +17,7 @@ const FULL_INCLUDE = {
  * PosOrder.folioItemId (real FK → FolioItem).
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  return handleRoute("pos.postFolio", async () => {
   const auth = await requireAuth(req, ["hotel_admin", "restaurant_staff", "front_desk"]);
   if ("error" in auth) return auth.error;
   const propertyId = auth.session.propertyId;
@@ -114,4 +116,5 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   emitRealtime("global", "folio:update", { reservationId: reservation.id, kind: "pos_posted", orderId: order.id, amount: order.totalAmount });
 
   return NextResponse.json({ order: updated, folioItem });
+  });
 }
