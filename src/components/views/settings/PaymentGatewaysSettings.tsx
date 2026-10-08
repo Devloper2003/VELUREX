@@ -150,7 +150,7 @@ export default function PaymentGatewaysSettings({ isAdmin }: { isAdmin: boolean 
   const test = async (g: GatewayRow) => {
     setTestingId(g.id);
     try {
-      const r = await api<{ ok: boolean; message: string }>(`/api/settings/payment-gateways/${g.id}/test`, { method: "POST" });
+      const r = await api<{ ok: boolean; message: string }>(`/api/settings/payment-gateways/${g.id}/test-connection`, { method: "POST" });
       setTestResult((prev) => ({ ...prev, [g.id]: r }));
       if (r.ok) toast({ title: "Connection OK", description: r.message });
       else toast({ title: "Connection failed", description: r.message, variant: "destructive" });

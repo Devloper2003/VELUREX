@@ -12,6 +12,20 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.9.2] — 2026-10-08 · Plug Proof
+
+### Fixed — "Test connection" works: the missing test endpoint exists now
+- **404 resolved.** After linking their own gateway, clicking **Test connection** failed with `Test failed — Request failed (404)`: the button shipped in v2.9.0 but its dedicated endpoint (`POST /api/settings/payment-gateways/[id]/test-connection`) never made it into the release. The route now exists — role-guarded to the tenant's `hotel_admin`, scoped to their own property's gateways, and running inside the shared error wrapper.
+- **A real round-trip, not a fake check.** The test performs an authenticated call *from the server* to Razorpay (`GET /v1/orders?count=1` with Basic auth) or Stripe (`GET /v1/balance` with the secret key) using the tenant's decrypted credentials, with a 10s timeout; manual methods (UPI-QR / bank) get a credential-completeness check instead.
+- **Precise results, inline and as a toast.** Credential rejection (401), other HTTP statuses and network failures each map to their own actionable message — e.g. *"Razorpay rejected these credentials (401 Unauthorized) — re-check the Key ID / Key Secret pair"* — so the tenant always knows whether the keys, the mode or the network is at fault.
+- **Audit trail** — every test is logged (`GATEWAY_TEST_OK` / `GATEWAY_TEST_FAILED`) with provider, mode and outcome.
+
+### Verified
+- curl: dummy Razorpay credentials → `200 { ok: false, "Razorpay rejected these credentials (401 Unauthorized)…" }` — a real API round-trip through the new endpoint.
+- Browser QA (Settings → Payments): gateway link flow → "Gateway linked" toast → Test connection → inline red chip with the precise 401 message; zero console errors; audit entry written.
+
+---
+
 ## [2.9.1] — 2026-10-08 · Settle Sure
 
 ### Fixed — payments work again in production + errors you can actually read

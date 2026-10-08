@@ -11,9 +11,9 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.9.1";
+export const APP_VERSION = "2.9.2";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Settle Sure";
+export const APP_RELEASE_CODENAME = "Plug Proof";
 export const APP_RELEASE_DATE = "2026-10-08";
 
 export type ReleaseNote = {
@@ -25,6 +25,16 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.9.2",
+    date: "2026-10-08",
+    codename: "Plug Proof",
+    highlights: [
+      "Fixed: \"Test connection\" on a linked gateway returned \"Request failed (404)\" — the dedicated test endpoint was missing from the v2.9.0 release even though the button shipped; POST /api/settings/payment-gateways/[id]/test-connection now exists and performs the real authenticated round-trip (Razorpay orders API / Stripe balance API) from the server",
+      "The result now surfaces precisely: Razorpay/Stripe credential rejections (401), other HTTP errors and network failures each get their own actionable message — inline on the gateway card and as a toast — so a tenant always knows whether the keys, the mode or the network is at fault",
+      "Every test attempt is audited (GATEWAY_TEST_OK / GATEWAY_TEST_FAILED) with the provider, mode and outcome",
+    ],
+  },
   {
     version: "2.9.1",
     date: "2026-10-08",
