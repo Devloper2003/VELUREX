@@ -70,16 +70,29 @@ declare global {
   }
 }
 
+/**
+ * Load Razorpay's checkout script exactly once (single-flight — parallel opens
+ * or retries must not inject duplicate <script> tags). Resolves false if the
+ * network blocks it (offline, ad-blocker, DNS) so the caller can show a
+ * precise remediation message.
+ */
+let rzpScriptPromise: Promise<boolean> | null = null;
 function loadRazorpayScript(): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (typeof window === "undefined") return resolve(false);
-    if (window.Razorpay) return resolve(true);
+  if (typeof window === "undefined") return Promise.resolve(false);
+  if (window.Razorpay) return Promise.resolve(true);
+  if (rzpScriptPromise) return rzpScriptPromise;
+  rzpScriptPromise = new Promise<boolean>((resolve) => {
     const s = document.createElement("script");
     s.src = "https://checkout.razorpay.com/v1/checkout.js";
+    s.async = true;
     s.onload = () => resolve(true);
-    s.onerror = () => resolve(false);
+    s.onerror = () => {
+      rzpScriptPromise = null; // allow a genuine retry on the next attempt
+      resolve(false);
+    };
     document.body.appendChild(s);
   });
+  return rzpScriptPromise;
 }
 
 export default function GatewayCheckoutDialog({
@@ -139,9 +152,18 @@ export default function GatewayCheckoutDialog({
 
   /** Real Razorpay checkout → verify signature server-side. */
   const runRealCheckout = async (payload: CheckoutPayload): Promise<void> => {
-    const ready = await loadRazorpayScript();
+    let ready = await loadRazorpayScript();
+    if (!ready) {
+      // One retry after a short pause — transient network blips are common.
+      await new Promise((r) => setTimeout(r, 1200));
+      ready = await loadRazorpayScript();
+    }
     if (!ready || !window.Razorpay) {
-      toast({ title: "Could not load the payment window", description: "Check the connection and try again.", variant: "destructive" });
+      toast({
+        title: "Could not load the payment window",
+        description: "Razorpay's checkout script did not load — check the internet connection, disable any ad-blocker for this site, and make sure the app is updated to v2.10.0 (older versions blocked the script via security headers). The order is safe; no money moved.",
+        variant: "destructive",
+      });
       return;
     }
     const payId = await new Promise<string | null>((resolve) => {

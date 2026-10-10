@@ -12,6 +12,22 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.10.0] — 2026-10-10 · Clean Slate
+
+### Fixed — online payments can finally open their window
+- **Root cause found: our own security headers.** Every Razorpay charge failed in the browser with *"Could not load the payment window — Check the connection and try again"* even though the order was created fine server-side. The app's Content-Security-Policy (`next.config.ts`) allowed only same-origin scripts and **no frames at all** (`frame-src 'none'`), so `checkout.razorpay.com/v1/checkout.js` was blocked from loading and Razorpay's hosted payment modal could never be embedded.
+- **Surgical CSP allowance.** The policy now permits exactly what Razorpay's hosted checkout needs — the checkout script (`https://checkout.razorpay.com`), the payment-modal iframes (`https://api.razorpay.com`, `https://checkout.razorpay.com`), its in-page XHR/telemetry endpoints and badge images (`https://*.razorpay.com`) — and the Payment Request permission for the checkout frame. Every other third-party origin, plugin media and framing of the app itself stay blocked (`frame-ancestors 'none'` unchanged). Verified in-browser: the checkout script now loads (`window.Razorpay` available) under the new policy.
+- **Loader hardened.** The checkout script is loaded exactly once even if several payment dialogs open in parallel (single-flight promise, no duplicate `<script>` tags), a transient network failure gets one automatic retry, and if loading still fails the message now gives real remedies — internet connection, ad-blocker on this site, app version — plus the reassurance that the order is safe and no money moved.
+
+### Added — delete reservations (hotel admin)
+- **Delete icon in the Reservations desk.** Completed stays (checked-out, cancelled, no-show) now show a red trash icon next to the Invoice action. Clicking it opens a confirmation that names the guest, amount and status and warns the confirmation number can never be recovered — preferring *Cancel* for stays that belong in the books.
+- **Guarded end-to-end.** `DELETE /api/reservations/[id]` is `hotel_admin`-only, refuses live stays (hold / confirmed / checked-in → 409 "cancel or check out first"), and removes the reservation together with its folio items and payments in a single transaction so no orphaned charges survive. POS orders and WhatsApp messages are kept as history and merely detached. Every deletion is written to the audit trail (`RESERVATION_DELETE`) with confirmation number, guest, status and amount.
+
+### Verified
+- In-browser: `checkout.razorpay.com/v1/checkout.js` loads under the new CSP; Reservations → checked-out row shows Invoice + delete icon → confirm dialog → "Reservation deleted — RG-1022 — Neha Gupta removed with its folio and payments" → row gone; zero console errors; lint clean.
+
+---
+
 ## [2.9.3] — 2026-10-08 · Steady Hand
 
 ### Fixed — gateway test survives Razorpay's rate limiter (HTTP 429)

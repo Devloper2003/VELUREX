@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import {
   Plus, Search, Loader2, MoreHorizontal, LogIn, LogOut, Pencil, XCircle, CheckCheck,
   CalendarDays, CalendarClock, Users, FileImage, IndianRupee, Printer, Layers, TicketPercent, ReceiptIndianRupee, Check, BedDouble,
-  Download, ChevronDown, Wallet,
+  Download, ChevronDown, Wallet, Trash2,
 } from "lucide-react";
 import { receiptHtml, type ReceiptPayload } from "@/lib/receipt-html";
 import { invoiceHtml, type InvoicePayload } from "@/lib/invoice-format";
@@ -236,6 +236,7 @@ export default function ReservationsView() {
   const { toast } = useToast();
   const user = useSession((s) => s.user);
   const canAct = user?.role === "hotel_admin" || user?.role === "front_desk";
+  const isAdmin = user?.role === "hotel_admin";
 
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -248,6 +249,9 @@ export default function ReservationsView() {
   const [checkInRes, setCheckInRes] = useState<Reservation | null>(null);
   const [checkOutRes, setCheckOutRes] = useState<Reservation | null>(null);
   const [cancelRes, setCancelRes] = useState<Reservation | null>(null);
+  // Delete (permanent removal) — hotel_admin only, terminal stays only.
+  const [deleteRes, setDeleteRes] = useState<Reservation | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [groupOpen, setGroupOpen] = useState<string | null>(null); // group code
   const [property, setProperty] = useState<PropertyLite>(FALLBACK_PROPERTY);
 
@@ -340,6 +344,21 @@ export default function ReservationsView() {
       load();
     } catch (e) {
       toast({ title: "Could not cancel", description: (e as Error).message, variant: "destructive" });
+    }
+  }
+
+  async function deleteReservation() {
+    if (!deleteRes || deleting) return;
+    setDeleting(true);
+    try {
+      await api(`/api/reservations/${deleteRes.id}`, { method: "DELETE" });
+      toast({ title: "Reservation deleted", description: `${deleteRes.confirmationNumber} — ${deleteRes.guest.fullName} removed with its folio and payments.` });
+      setDeleteRes(null);
+      load();
+    } catch (e) {
+      toast({ title: "Could not delete", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -558,14 +577,26 @@ export default function ReservationsView() {
                           </DropdownMenuContent>
                         </DropdownMenu>
                       ) : (
-                        <button
-                          className="btn-outline h-7 px-2.5 text-xs gap-1.5"
-                          onClick={() => setInvoiceRes(r)}
-                          aria-label={`View invoice and details for ${r.confirmationNumber}`}
-                          title="View invoice & stay details"
-                        >
-                          <ReceiptIndianRupee className="h-3.5 w-3.5 text-brass" /> Invoice
-                        </button>
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            className="btn-outline h-7 px-2.5 text-xs gap-1.5"
+                            onClick={() => setInvoiceRes(r)}
+                            aria-label={`View invoice and details for ${r.confirmationNumber}`}
+                            title="View invoice & stay details"
+                          >
+                            <ReceiptIndianRupee className="h-3.5 w-3.5 text-brass" /> Invoice
+                          </button>
+                          {isAdmin && (
+                            <button
+                              className="btn-ghost h-7 px-2 text-danger hover:bg-danger/10"
+                              onClick={() => setDeleteRes(r)}
+                              aria-label={`Delete reservation ${r.confirmationNumber}`}
+                              title="Delete this reservation permanently"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
                       )
                     ) : (
                       <span className="text-muted-ink text-xs">—</span>
@@ -630,6 +661,33 @@ export default function ReservationsView() {
           <AlertDialogFooter>
             <AlertDialogCancel className="btn-outline h-9">Keep Reservation</AlertDialogCancel>
             <AlertDialogAction className="btn-danger" onClick={cancelReservation}>Cancel Reservation</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete (permanent) — hotel_admin only, terminal stays only */}
+      <AlertDialog open={!!deleteRes} onOpenChange={(o) => !o && setDeleteRes(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteRes?.confirmationNumber}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes {deleteRes?.guest.fullName}&apos;s reservation with its folio charges and payments
+              {deleteRes ? ` (₹${deleteRes.totalAmount.toFixed(2)}, ${STATUS_LABELS[deleteRes.status] ?? deleteRes.status})` : ""}. The confirmation number can never be recovered — prefer Cancel for stays that should stay in the books.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="btn-outline h-9">Keep Record</AlertDialogCancel>
+            <AlertDialogAction
+              className="btn-danger"
+              disabled={deleting}
+              onClick={(e) => {
+                e.preventDefault(); // keep the dialog open until the call resolves
+                deleteReservation();
+              }}
+            >
+              {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Delete Permanently
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

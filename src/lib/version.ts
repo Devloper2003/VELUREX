@@ -11,10 +11,10 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.9.3";
+export const APP_VERSION = "2.10.0";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Steady Hand";
-export const APP_RELEASE_DATE = "2026-10-08";
+export const APP_RELEASE_CODENAME = "Clean Slate";
+export const APP_RELEASE_DATE = "2026-10-10";
 
 export type ReleaseNote = {
   version: string;
@@ -25,6 +25,16 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.10.0",
+    date: "2026-10-10",
+    codename: "Clean Slate",
+    highlights: [
+      "Fixed: online payments could never open their window — \"Could not load the payment window\" on every Razorpay charge. The app's Content-Security-Policy blocked Razorpay's checkout script, its payment-modal iframe and its API endpoints; the policy now allows exactly the Razorpay origins needed (checkout script, api.razorpay.com/checkout.razorpay.com frames, telemetry, badge images) while everything else stays blocked",
+      "Delete for reservations — hotel admins now get a delete (trash) icon on completed reservation rows (checked-out / cancelled / no-show) next to Invoice, with a red confirm dialog that spells out exactly what is removed. The server enforces the same rules: admin-only, terminal stays only, folio charges and payments removed in one transaction, POS orders and WhatsApp history kept and merely detached; every deletion is audit-logged",
+      "Checkout script loader hardened — loaded exactly once (no duplicate script tags on parallel opens), one automatic retry on a transient network blip, and if it still fails the message now explains the actual remedies (internet, ad-blocker, app version) and reassures that the order is safe and no money moved",
+    ],
+  },
   {
     version: "2.9.3",
     date: "2026-10-08",

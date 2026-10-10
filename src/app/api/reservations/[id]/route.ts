@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logActivity } from "@/lib/business";
+import { handleRoute } from "@/lib/route-error";
 
 const BLOCKING_STATUSES = ["confirmed", "checked_in", "hold"];
 const RES_STATUSES = ["hold", "confirmed", "checked_in", "checked_out", "cancelled", "no_show"];
@@ -211,4 +212,56 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   });
 
   return NextResponse.json({ reservation: updated });
+}
+
+/**
+ * DELETE /api/reservations/[id] — permanently remove a reservation record.
+ * hotel_admin only. Only terminal stays (checked_out / cancelled / no_show)
+ * can be deleted — live ones (hold / confirmed / checked_in) must be cancelled
+ * or checked out first, so room blocks and availability can never be bypassed.
+ * The reservation's folio items and payments are removed in the same
+ * transaction (no orphaned charges); POS orders and WhatsApp messages are
+ * history-only and are simply detached (their reservation reference is
+ * nullable and clears automatically).
+ */
+export async function DELETE(req: NextRequest, ctx: RouteCtx) {
+  return handleRoute("reservations.delete", () => deleteReservation(req, ctx));
+}
+
+async function deleteReservation(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
+  const auth = await requireAuth(req, ["hotel_admin"]);
+  if ("error" in auth) return auth.error;
+  const propertyId = auth.session.propertyId;
+  const { id } = await ctx.params;
+
+  const reservation = await db.reservation.findFirst({
+    where: { id, propertyId },
+    include: { guest: { select: { fullName: true } } },
+  });
+  if (!reservation) return NextResponse.json({ error: "Reservation not found" }, { status: 404 });
+
+  if (["hold", "confirmed", "checked_in"].includes(reservation.status)) {
+    return NextResponse.json(
+      { error: "This stay is still live — cancel it (or check the guest out) before deleting. Only checked-out, cancelled or no-show reservations can be deleted." },
+      { status: 409 }
+    );
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.payment.deleteMany({ where: { reservationId: reservation.id } });
+    await tx.folioItem.deleteMany({ where: { reservationId: reservation.id } });
+    await tx.reservation.delete({ where: { id: reservation.id } });
+  });
+
+  await logActivity({
+    propertyId,
+    staffId: auth.session.sub,
+    staffName: auth.session.name,
+    action: "RESERVATION_DELETE",
+    entity: "Reservation",
+    entityId: reservation.id,
+    details: `Deleted ${reservation.confirmationNumber} — ${reservation.guest.fullName} (${reservation.status}, ₹${reservation.totalAmount.toFixed(2)}, ${reservation.nights}n) with its folio charges and payments`,
+  }).catch(() => {});
+
+  return NextResponse.json({ ok: true });
 }
