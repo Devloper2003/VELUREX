@@ -41,6 +41,9 @@ interface CheckoutPayload {
     currency: string;
     mock: boolean;
     description: string;
+    /** Guest contact resolved server-side — prefilled into the gateway checkout so
+     *  Razorpay's "enter mobile number" step is skipped for folio/stay payments. */
+    customer?: { name: string; email: string; contact: string };
   };
 }
 
@@ -76,6 +79,17 @@ declare global {
  * network blocks it (offline, ad-blocker, DNS) so the caller can show a
  * precise remediation message.
  */
+/**
+ * Razorpay's prefill.contact wants a bare phone number (10 digits for India).
+ * Guest phones are stored free-form (+91 98765 43210, 0 98…, spaces) — normalize.
+ */
+function normalizeContact(raw: string): string {
+  const digits = (raw || "").replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+  if (digits.length === 11 && digits.startsWith("0")) return digits.slice(1);
+  return digits;
+}
+
 let rzpScriptPromise: Promise<boolean> | null = null;
 function loadRazorpayScript(): Promise<boolean> {
   if (typeof window === "undefined") return Promise.resolve(false);
@@ -104,6 +118,11 @@ export default function GatewayCheckoutDialog({
   const [busy, setBusy] = useState(false);
   const [selectedId, setSelectedId] = useState<string>("");
   const [sandbox, setSandbox] = useState<CheckoutPayload | null>(null); // awaiting simulated confirm
+  // True while Razorpay's hosted checkout iframe is on screen. Our Radix dialog
+  // must leave the DOM during it — a mounted Radix dialog keeps a focus trap
+  // alive that steals focus back from the gateway iframe, making its inputs
+  // (e.g. the contact-details mobile field) impossible to type in.
+  const [gatewayLive, setGatewayLive] = useState(false);
   const startedRef = useRef(false);
 
   const loadGateways = useCallback(async () => {
@@ -167,35 +186,66 @@ export default function GatewayCheckoutDialog({
       return;
     }
     const payId = await new Promise<string | null>((resolve) => {
-      const rzp = new window.Razorpay!({
-        key: payload.checkout.keyId,
-        order_id: payload.checkout.orderId,
-        amount: Math.round(payload.checkout.amount * 100),
-        currency: payload.checkout.currency || "INR",
-        name: "Velurex HMS",
-        description: payload.checkout.description || description,
-        prefill: { method: payload.gateway.provider },
-        theme: { color: "#17352c" },
-        modal: { ondismiss: () => resolve(null) },
-        handler: (resp: { razorpay_payment_id?: string; razorpay_order_id?: string; razorpay_signature?: string }) => {
-          // Verify + apply server-side (never trust the browser).
-          api<{ payment: { gatewayRef?: string } }>("/api/payments/verify", {
-            method: "POST",
-            body: JSON.stringify({
-              paymentId: payload.paymentId,
-              razorpay_payment_id: resp.razorpay_payment_id,
-              razorpay_order_id: resp.razorpay_order_id,
-              razorpay_signature: resp.razorpay_signature,
-            }),
-          })
-            .then((v) => resolve(v.payment?.gatewayRef || resp.razorpay_payment_id || "verified"))
-            .catch((e: Error) => {
-              toast({ title: "Verification failed", description: e.message, variant: "destructive" });
+      const c = payload.checkout.customer;
+      const contact = normalizeContact(c?.contact || "");
+      let rzp: { open: () => void };
+      try {
+        rzp = new window.Razorpay!({
+          key: payload.checkout.keyId,
+          order_id: payload.checkout.orderId,
+          amount: Math.round(payload.checkout.amount * 100),
+          currency: payload.checkout.currency || "INR",
+          name: "Velurex HMS",
+          description: payload.checkout.description || description,
+          prefill: {
+            ...(c?.name ? { name: c.name } : {}),
+            ...(c?.email ? { email: c.email } : {}),
+            ...(contact ? { contact } : {}),
+            method: payload.gateway.provider,
+          },
+          theme: { color: "#17352c" },
+          modal: {
+            ondismiss: () => {
+              setGatewayLive(false); // bring our dialog back for a retry
               resolve(null);
-            });
-        },
-      });
-      rzp.open();
+            },
+          },
+          handler: (resp: { razorpay_payment_id?: string; razorpay_order_id?: string; razorpay_signature?: string }) => {
+            // Verify + apply server-side (never trust the browser).
+            api<{ payment: { gatewayRef?: string } }>("/api/payments/verify", {
+              method: "POST",
+              body: JSON.stringify({
+                paymentId: payload.paymentId,
+                razorpay_payment_id: resp.razorpay_payment_id,
+                razorpay_order_id: resp.razorpay_order_id,
+                razorpay_signature: resp.razorpay_signature,
+              }),
+            })
+              .then((v) => {
+                setGatewayLive(false);
+                resolve(v.payment?.gatewayRef || resp.razorpay_payment_id || "verified");
+              })
+              .catch((e: Error) => {
+                setGatewayLive(false);
+                toast({ title: "Verification failed", description: e.message, variant: "destructive" });
+                resolve(null);
+              });
+          },
+        });
+      } catch (err) {
+        setGatewayLive(false);
+        toast({
+          title: "Could not open the payment window",
+          description: err instanceof Error ? err.message : "The gateway rejected the checkout — re-check the linked keys in Settings → Payments.",
+          variant: "destructive",
+        });
+        resolve(null);
+        return;
+      }
+      // Unmount our dialog BEFORE the iframe takes focus — a mounted Radix
+      // dialog traps focus and Razorpay's inputs become untypeable.
+      setGatewayLive(true);
+      setTimeout(() => rzp.open(), 80); // let React commit the unmount first
     });
     if (payId) finish(payload.paymentId, payId, payload.gateway, false);
     // dismissed / failed → dialog stays open for a retry
@@ -247,7 +297,7 @@ export default function GatewayCheckoutDialog({
   const selected = gateways.find((g) => g.id === selectedId);
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
+    <Dialog open={open && !gatewayLive} onOpenChange={(o) => !busy && onOpenChange(o)}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">

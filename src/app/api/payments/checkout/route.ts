@@ -38,13 +38,21 @@ async function checkoutPost(req: NextRequest): Promise<NextResponse> {
 
   // ── Resolve target ────────────────────────────────────────────────────────
   let reservation: { id: string; confirmationNumber: string; guestId: string | null } | null = null;
-  let posOrder: { id: string; orderNumber: string; totalAmount: number; paymentStatus: string } | null = null;
+  let posOrder: {
+    id: string; orderNumber: string; totalAmount: number; paymentStatus: string;
+    guestName: string; reservationId: string | null;
+  } | null = null;
   let amount = Number(body.amount);
+  /** Guest contact for the gateway checkout prefill — skips Razorpay's "enter mobile number" step. */
+  let customer: { name: string; email: string; contact: string } | null = null;
 
   if (posOrderId) {
     const o = await db.posOrder.findFirst({
       where: { id: posOrderId, propertyId },
-      select: { id: true, orderNumber: true, totalAmount: true, paymentStatus: true },
+      select: {
+        id: true, orderNumber: true, totalAmount: true, paymentStatus: true,
+        guestName: true, reservationId: true,
+      },
     });
     if (!o) return NextResponse.json({ error: "Order not found" }, { status: 404 });
     if (o.paymentStatus !== "unpaid") {
@@ -52,16 +60,29 @@ async function checkoutPost(req: NextRequest): Promise<NextResponse> {
     }
     posOrder = o;
     amount = o.totalAmount;
+    // Room-service orders ride a reservation — resolve that guest for the prefill.
+    if (o.reservationId) {
+      const rr = await db.reservation.findFirst({
+        where: { id: o.reservationId, propertyId },
+        select: { guest: { select: { fullName: true, email: true, phone: true } } },
+      });
+      if (rr?.guest) customer = { name: rr.guest.fullName, email: rr.guest.email, contact: rr.guest.phone };
+    }
+    if (!customer && o.guestName) customer = { name: o.guestName, email: "", contact: "" };
   } else if (reservationId) {
     const r = await db.reservation.findFirst({
       where: { id: reservationId, propertyId },
-      select: { id: true, confirmationNumber: true, guestId: true },
+      select: {
+        id: true, confirmationNumber: true, guestId: true,
+        guest: { select: { fullName: true, email: true, phone: true } },
+      },
     });
     if (!r) return NextResponse.json({ error: "Reservation not found" }, { status: 404 });
     if (!Number.isFinite(amount) || amount <= 0) {
       return NextResponse.json({ error: "A positive amount is required" }, { status: 400 });
     }
     reservation = r;
+    if (r.guest) customer = { name: r.guest.fullName, email: r.guest.email, contact: r.guest.phone };
   } else {
     return NextResponse.json({ error: "reservationId or posOrderId is required" }, { status: 400 });
   }
@@ -107,7 +128,7 @@ async function checkoutPost(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({
       paymentId: existing.id,
       gateway: { id: gateway.id, provider: gateway.provider, label: gateway.label, mode: gateway.mode },
-      checkout: { orderId: existing.reference, amount: existing.amount, keyId: creds.keyId, currency: "INR", mock: true },
+      checkout: { orderId: existing.reference, amount: existing.amount, keyId: creds.keyId, currency: "INR", mock: true, customer: customer ?? undefined },
     });
   }
 
@@ -148,6 +169,7 @@ async function checkoutPost(req: NextRequest): Promise<NextResponse> {
         currency: "INR",
         mock: order.mock === true,
         description: description || (posOrder ? `POS ${posOrder.orderNumber}` : `Stay ${reservation?.confirmationNumber ?? ""}`),
+        customer: customer ?? undefined,
       },
     },
     { status: 201 }

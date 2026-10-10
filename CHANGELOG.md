@@ -12,6 +12,19 @@ All notable changes to Velurex HMS are documented here, newest first.
 
 ---
 
+## [2.10.1] — 2026-10-10 · Fast Pass
+
+### Fixed — Razorpay's "Contact details" wall (and the untouchable keyboard)
+- **Symptom.** Every Razorpay charge stopped at a *"Contact details — Enter mobile number to continue"* screen with an empty prefilled-nothing field, and typing into it did nothing — the payment felt bricked.
+- **Cause 1 — no guest details passed.** The checkout was opened with `prefill: { method }` only, so Razorpay had no name/email/mobile and asked for the mobile itself. **Fix:** `POST /api/payments/checkout` now resolves the payer server-side — the reservation's guest for folio payments, the linked reservation's guest for room-service POS orders, or the order's guest name for walk-ins — and returns `customer { name, email, contact }`. The dialog prefills all three (mobile normalized to bare digits, `+91`/leading-0 stripped), so known guests skip the contact step entirely.
+- **Cause 2 — our own dialog ate the keystrokes.** While Razorpay's hosted window is open, the app's payment dialog stays mounted underneath — and Radix (shadcn/ui) dialogs run a focus trap that yanks focus back from anything outside itself, including Razorpay's iframe. Clicks landed in the mobile field; the trap stole focus before a single digit could be typed. **Fix:** the app dialog now unmounts while the gateway window is up and returns automatically on dismiss or verification failure — every field inside Razorpay (mobile, UPI, card) is freely typeable. Razorpay's iframe covers the screen, so nothing visually changes until the window closes.
+- **Hardening.** A synchronous crash of the Razorpay constructor (bad/restricted key) is now caught and reported with an actionable message instead of leaving the flow hanging silently.
+
+### Verified
+- Checkout API returns the stay's guest contact for folio payments (browser-verified payload); mock-path payment regression clean (sandbox confirm → recorded); `normalizeContact` unit-checked (`+91 98765 43210` / `09876543210` / `919876543210` → `9876543210`); lint clean; health reports v2.10.1.
+
+---
+
 ## [2.10.0] — 2026-10-10 · Clean Slate
 
 ### Fixed — online payments can finally open their window

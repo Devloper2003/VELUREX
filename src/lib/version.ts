@@ -11,9 +11,9 @@
  */
 
 export const APP_NAME = "Velurex HMS";
-export const APP_VERSION = "2.10.0";
+export const APP_VERSION = "2.10.1";
 export const APP_VERSION_TAG = `v${APP_VERSION}`;
-export const APP_RELEASE_CODENAME = "Clean Slate";
+export const APP_RELEASE_CODENAME = "Fast Pass";
 export const APP_RELEASE_DATE = "2026-10-10";
 
 export type ReleaseNote = {
@@ -25,6 +25,16 @@ export type ReleaseNote = {
 
 /** Newest first — every shipped release, one entry each. */
 export const RELEASES: ReleaseNote[] = [
+  {
+    version: "2.10.1",
+    date: "2026-10-10",
+    codename: "Fast Pass",
+    highlights: [
+      "Fixed: Razorpay checkout demanded the guest's mobile number on every payment (\"Contact details — enter mobile number to continue\") and the field could not be typed into. Two causes, both fixed: the checkout was opened without any guest details, and the app's own payment dialog kept a focus trap alive that stole every keystroke from Razorpay's window",
+      "Guest details now ride along automatically — the checkout API resolves the stay's guest (folio payments), the linked reservation's guest (room-service POS orders) or the order's guest name (walk-ins) and prefills name, email and a normalized mobile number into Razorpay, so regular guests skip the contact step entirely",
+      "The payment dialog now steps out of the way while the gateway window is open (and returns on dismiss or verification failure), so every field inside Razorpay — mobile number, UPI, card — is freely typeable; a crashed gateway constructor is caught with a clear message instead of a silent hang",
+    ],
+  },
   {
     version: "2.10.0",
     date: "2026-10-10",
